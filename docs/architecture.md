@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 3)
+## Current Foundation (Implemented — Milestone 4)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -15,6 +15,7 @@ Status legend:
 │  POST /api/projects/from-path  (local dir)    │
 │  POST /api/projects/{id}/profile              │
 │  POST /api/projects/{id}/discover             │
+│  POST /api/projects/{id}/plan                 │
 │  GET  /api/projects/{id}                      │
 └─────────────────────┬────────────────────────┘
                       │ HTTP
@@ -26,12 +27,16 @@ Status legend:
 │  app/models/                                    │
 │    project.py          Pydantic schemas (M2)  │
 │    codemap.py          Code map schemas (M3)  │
+│    test_plan.py        Test plan schemas (M4) │
 │  app/services/                                 │
 │    project_ingestion.py  upload + path mgmt   │
 │    project_profiler.py   deterministic scan   │
 │    code_analyzer.py      Python ast analysis  │
 │    test_discovery.py     test func extraction │
 │    project_discovery.py  discovery orchestrator│
+│    call_graph.py        function-level calls   │
+│    risk_scorer.py       target risk scoring   │
+│    test_planner.py      plan generation       │
 │  app/agents/        future home of agents     │
 │  app/code_intelligence/  future               │
 │  app/execution/      future (Docker sandbox)  │
@@ -40,7 +45,16 @@ Status legend:
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 3):
+Implemented components (Milestone 4):
+
+- **Test plan generation** — deterministic, prioritised test specifications derived from code map and profile
+- **Risk scoring** — configurable weighted scoring using test coverage, argument count, async, docstrings, public method, project complexity, mapping confidence, and fan-in
+- **Function-level call graph** — lightweight AST-based caller/callee analysis for fan-in risk signals
+- **Edge-case inference** — parameter-name heuristics suggesting specific edge cases per function argument
+- **Test specification assembly** — priority, test type, suggested name, preconditions, related tested targets
+- **Test plan persistence** — filesystem-based JSON storage under `.meta/test_plan.json`
+
+### Milestone 3 (also implemented)
 
 - **Code map generation** — deterministic per-file Python ast analysis producing structured source/test metadata
 - **Source module analysis** — functions, classes, methods with signatures, decorators, docstrings, line ranges, imports
@@ -80,7 +94,7 @@ Implemented components (Milestone 3):
 - **Repository-level code understanding** — Tree-sitter based parsing, code-aware RAG
 - **Vector storage** — Qdrant for embeddings
 - **LLM inference** — open-source coding LLMs served locally (NVIDIA RTX 5060) with GPU acceleration via PyTorch / Hugging Face Transformers; private NVIDIA DGX B200 for larger experiments
-- **Autonomous agents** — test planning, generation, failure analysis, regeneration
+- **Autonomous agents** — test generation, failure analysis, regeneration
 - **Sandboxed execution** — Docker-based isolated test running
 - **Dashboard** — Next.js + React + TypeScript + Tailwind CSS frontend with live agent activity
 - **Java/JS/TS syntax metrics** — Tree-sitter integration for functions/classes beyond Python
@@ -90,11 +104,10 @@ Implemented components (Milestone 3):
 - Mutation testing strategies
 - Sandboxed bug detection and automated code repair
 - Human-in-the-loop approval workflow before modifying original projects
-- Risk-based and requirements-based test planning heuristics
 - CPU/GPU benchmarking suite
 - GitHub repository integration
 - Multi-language support beyond Python (Java, JavaScript/TypeScript)
 
 ## Not Implemented
 
-No LLM integration, RAG, embeddings, vector database, agents, test generation, Docker execution, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. These are introduced incrementally after each milestone is verified.
+No LLM integration, RAG, embeddings, vector database, agents, test generation, Docker execution, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Test planning is deterministic and rule-based; LLM-powered planning is not yet introduced. These are introduced incrementally after each milestone is verified.

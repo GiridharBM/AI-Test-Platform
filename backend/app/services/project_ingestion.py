@@ -137,6 +137,21 @@ def read_codemap(workspace: Path, project_id: str) -> str | None:
     return codemap_path.read_text(encoding="utf-8")
 
 
+def save_test_plan(workspace: Path, plan_json: str) -> None:
+    """Persist a generated test plan under .meta/ (never inside scanned trees)."""
+    pid = json.loads(plan_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "test_plan.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(plan_json, encoding="utf-8")
+
+
+def read_test_plan(workspace: Path, project_id: str) -> str | None:
+    plan_path = project_dir(workspace, project_id) / _META_DIR / "test_plan.json"
+    if not plan_path.is_file():
+        return None
+    return plan_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,

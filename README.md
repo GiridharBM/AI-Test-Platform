@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 3 — Code Map & Test Discovery**
+> **Milestone 4 — Deterministic Test Plan Generation**
 
-The platform can now ingest and profile projects, and additionally produce a structured code map: per-file Python ast analysis (functions, classes, methods, signatures, decorators), test function discovery, heuristic test-to-source mapping, and testable target coverage summary.
+The platform can ingest and profile projects, produce a structured code map, and now generate prioritised test plans. Given the code map and project profile, a deterministic rule-based planner analyses every testable target, scores its risk, generates edge-case specifications, and returns a scored, ordered plan of what tests to write.
 
 ## Long-Term Vision
 
@@ -72,10 +72,11 @@ Open `http://localhost:8000` for the project-ingestion UI, or use the API direct
 | `/api/projects/from-path` | POST | Register a local directory for profiling |
 | `/api/projects/{id}/profile` | POST | Run deterministic profiling |
 | `/api/projects/{id}/discover` | POST | Run test discovery and build code map |
-| `/api/projects/{id}` | GET | Retrieve metadata, profile, and code map |
+| `/api/projects/{id}/plan` | POST | Generate prioritised test plan |
+| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, and test plan |
 
 Run tests:
 
 ```bash
-pytest          # 93 tests — upload, profiling, discovery, API, security
+pytest          # 136 tests — ingestion, profiling, discovery, planning, API, security
 ```
