@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 2 — Project Ingestion & Profiling**
+> **Milestone 3 — Code Map & Test Discovery**
 
-The platform can now accept software projects via folder upload or local filesystem path, then deterministically analyze and profile them (language detection, file metrics, test detection, dependency detection, API route detection, complexity classification).
+The platform can now ingest and profile projects, and additionally produce a structured code map: per-file Python ast analysis (functions, classes, methods, signatures, decorators), test function discovery, heuristic test-to-source mapping, and testable target coverage summary.
 
 ## Long-Term Vision
 
@@ -71,10 +71,11 @@ Open `http://localhost:8000` for the project-ingestion UI, or use the API direct
 | `/api/projects/upload` | POST | Upload a project folder (multipart) |
 | `/api/projects/from-path` | POST | Register a local directory for profiling |
 | `/api/projects/{id}/profile` | POST | Run deterministic profiling |
-| `/api/projects/{id}` | GET | Retrieve metadata and profile |
+| `/api/projects/{id}/discover` | POST | Run test discovery and build code map |
+| `/api/projects/{id}` | GET | Retrieve metadata, profile, and code map |
 
 Run tests:
 
 ```bash
-pytest          # 47 tests — upload, profiling, API, security
+pytest          # 93 tests — upload, profiling, discovery, API, security
 ```

@@ -5,6 +5,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.models.codemap import CodeMap
+
 OriginMode = Literal["upload", "path"]
 ComplexityLevel = Literal["Small", "Medium", "Large"]
 FileCategory = Literal["source", "test", "documentation", "configuration", "other"]
@@ -113,9 +115,10 @@ class ProjectMeta(BaseModel):
 
 
 class ProjectDetails(ProjectMeta):
-    """GET /api/projects/{id} response: metadata plus profile if generated."""
+    """GET /api/projects/{id} response: metadata plus profile and codemap."""
 
     profile: Optional[ProjectProfile] = None
+    codemap: Optional["CodeMap"] = None  # populated after discover
 
 
 class LocalPathRequest(BaseModel):

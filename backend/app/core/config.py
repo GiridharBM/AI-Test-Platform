@@ -68,6 +68,11 @@ PROTECTED_DIR_NAMES: frozenset[str] = frozenset({
     "appdata", "$recycle.bin", "system volume information",
 })
 
+# --- Discovery limits --------------------------------------------------------
+MAX_TESTABLE_TARGETS = 5_000                # functions/methods/classes in codemap
+MAX_TEST_FUNCTIONS = 5_000                  # test functions discovered per project
+MAX_MAPPING_ENTRIES = 10_000                # test-to-source mapping entries
+
 # --- Complexity classification thresholds (documented in docs/architecture.md)
 COMPLEXITY_LARGE_SOURCE_FILES = 100
 COMPLEXITY_LARGE_SOURCE_LINES = 30_000

@@ -1,4 +1,4 @@
-"""Project ingestion and profiling API endpoints."""
+"""Project ingestion, profiling, and test discovery API endpoints."""
 
 from typing import Annotated, Optional
 
@@ -8,6 +8,7 @@ from app.core import config
 from app.models.project import LocalPathRequest, ProjectDetails, ProjectMeta, ProjectProfile
 from app.services import project_ingestion as ingestion
 from app.services import project_profiler as profiler
+from app.services import project_discovery as discovery
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -47,10 +48,24 @@ def profile_existing_project(project_id: str) -> ProjectProfile:
     return profile
 
 
+@router.post("/{project_id}/discover")
+def discover_project(project_id: str):
+    """Run deterministic test discovery and return the CodeMap."""
+    from app.models.codemap import CodeMap
+    codemap = discovery.discover_project(project_id)
+    ingestion.save_codemap(config.WORKSPACE_DIR, codemap.model_dump_json())
+    return codemap
+
+
 @router.get("/{project_id}", response_model=ProjectDetails)
 def get_project(project_id: str) -> ProjectDetails:
-    """Retrieve project metadata and the generated profile, if any."""
+    """Retrieve project metadata, profile, and code map if generated."""
     meta = ingestion.read_meta(config.WORKSPACE_DIR, project_id)
     raw_profile = ingestion.read_profile(config.WORKSPACE_DIR, project_id)
     profile = ProjectProfile.model_validate_json(raw_profile) if raw_profile else None
-    return ProjectDetails(**meta.model_dump(), profile=profile)
+    raw_codemap = ingestion.read_codemap(config.WORKSPACE_DIR, project_id)
+    codemap = None
+    if raw_codemap:
+        from app.models.codemap import CodeMap
+        codemap = CodeMap.model_validate_json(raw_codemap)
+    return ProjectDetails(**meta.model_dump(), profile=profile, codemap=codemap)

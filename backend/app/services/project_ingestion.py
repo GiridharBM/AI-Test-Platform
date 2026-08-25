@@ -122,6 +122,21 @@ def read_profile(workspace: Path, project_id: str) -> str | None:
     return profile_path.read_text(encoding="utf-8")
 
 
+def save_codemap(workspace: Path, codemap_json: str) -> None:
+    """Persist a generated code map under .meta/ (never inside scanned trees)."""
+    pid = json.loads(codemap_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "codemap.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(codemap_json, encoding="utf-8")
+
+
+def read_codemap(workspace: Path, project_id: str) -> str | None:
+    codemap_path = project_dir(workspace, project_id) / _META_DIR / "codemap.json"
+    if not codemap_path.is_file():
+        return None
+    return codemap_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,

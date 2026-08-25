@@ -6,42 +6,58 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 2)
+## Current Foundation (Implemented — Milestone 3)
 
 ```
-┌─────────────────────────────────────────────┐
-│ browser / curl                               │
-│  POST /api/projects/upload  (folder upload)  │
-│  POST /api/projects/from-path (local dir)    │
-│  POST /api/projects/{id}/profile             │
-│  GET  /api/projects/{id}                     │
-└────────────────────┬────────────────────────┘
-                     │ HTTP
-┌────────────────────┴────────────────────────┐
-│ backend/                                     │  FastAPI + Uvicorn
-│  app/main.py        GET /health, static UI   │
-│  app/api/projects.py  project endpoints      │
-│  app/core/config.py   limits & thresholds    │
-│  app/models/project.py  Pydantic schemas     │
-│  app/services/                                │
-│    project_ingestion.py  upload + path mgmt  │
-│    project_profiler.py   deterministic scan  │
-│  app/agents/       future home of agents     │
-│  app/code_intelligence/  future              │
-│  app/execution/     future (Docker sandbox)  │
-│  app/evaluation/    future                   │
-│  workspace/         ingested project copies  │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ browser / curl                                │
+│  POST /api/projects/upload   (folder upload)  │
+│  POST /api/projects/from-path  (local dir)    │
+│  POST /api/projects/{id}/profile              │
+│  POST /api/projects/{id}/discover             │
+│  GET  /api/projects/{id}                      │
+└─────────────────────┬────────────────────────┘
+                      │ HTTP
+┌─────────────────────┴────────────────────────┐
+│ backend/                                      │  FastAPI + Uvicorn
+│  app/main.py          GET /health, static UI  │
+│  app/api/projects.py   project endpoints      │
+│  app/core/config.py    limits & thresholds    │
+│  app/models/                                    │
+│    project.py          Pydantic schemas (M2)  │
+│    codemap.py          Code map schemas (M3)  │
+│  app/services/                                 │
+│    project_ingestion.py  upload + path mgmt   │
+│    project_profiler.py   deterministic scan   │
+│    code_analyzer.py      Python ast analysis  │
+│    test_discovery.py     test func extraction │
+│    project_discovery.py  discovery orchestrator│
+│  app/agents/        future home of agents     │
+│  app/code_intelligence/  future               │
+│  app/execution/      future (Docker sandbox)  │
+│  app/evaluation/     future                   │
+│  workspace/          ingested project copies  │
+└───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 2):
+Implemented components (Milestone 3):
+
+- **Code map generation** — deterministic per-file Python ast analysis producing structured source/test metadata
+- **Source module analysis** — functions, classes, methods with signatures, decorators, docstrings, line ranges, imports
+- **Test function discovery** — test_*/_test extraction with decorators, assertion counts, line ranges
+- **Test-to-source mapping** — heuristic name similarity and import analysis with confidence scores
+- **Testable target registry** — functions, methods, classes annotated with test coverage info
+- **Coverage summary** — aggregate statistics: tested/untested targets, coverage percentage
+- **Code map persistence** — filesystem-based JSON storage under `.meta/codemap.json`
+
+### Milestone 2 (also implemented)
 
 - **Project ingestion** — folder upload preserving relative structure; local filesystem path registration (READ-ONLY)
 - **Path safety** — traversal prevention, protected-dir rejection, filesystem root blocking, workspace self-analysis guard
 - **Resource limits** — configurable max files (20k), max file size (2 MiB), max total size (200 MiB), max depth (20), all in `core/config.py`
 - **Language detection** — Python, Java, JavaScript, TypeScript by file extension
 - **File metrics** — source/test/doc/config/other classification; line counts; binary exclusion
-- **Python AST analysis** — functions, classes, methods via `ast` module
+- **Python AST analysis (aggregate)** — functions, classes, methods via `ast` module
 - **Test detection** — name patterns, directory conventions; framework detection (pytest, unittest, JUnit, TestNG, Jest, Vitest, Mocha) from manifest evidence
 - **Documentation detection** — markdown, RST, README files
 - **Dependency manifest detection** — requirements.txt, pyproject.toml, Pipfile, pom.xml, build.gradle, package.json with basic package counts
@@ -58,6 +74,9 @@ Implemented components (Milestone 2):
 
 ## Planned (Upcoming Milestones)
 
+- **Test generation** — LLM-powered unit, integration, API, edge-case, security-oriented test creation
+- **Test execution** — sandboxed test runs in Docker containers
+- **Failure diagnosis** — AI-driven analysis of test failures and potential bug detection
 - **Repository-level code understanding** — Tree-sitter based parsing, code-aware RAG
 - **Vector storage** — Qdrant for embeddings
 - **LLM inference** — open-source coding LLMs served locally (NVIDIA RTX 5060) with GPU acceleration via PyTorch / Hugging Face Transformers; private NVIDIA DGX B200 for larger experiments
