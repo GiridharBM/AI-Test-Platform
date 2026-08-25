@@ -16,6 +16,9 @@ htmlcov/
 venv/
 env/
 
+# --- Platform workspace (ingested projects & metadata) ---
+backend/workspace/
+
 # --- Node.js / Next.js ---
 node_modules/
 .next/

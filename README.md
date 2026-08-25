@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 1 — Project Foundation**
+> **Milestone 2 — Project Ingestion & Profiling**
 
-The repository currently contains the project skeleton and a minimal FastAPI backend with a health endpoint. No AI/ML functionality is implemented yet.
+The platform can now accept software projects via folder upload or local filesystem path, then deterministically analyze and profile them (language detection, file metrics, test detection, dependency detection, API route detection, complexity classification).
 
 ## Long-Term Vision
 
@@ -63,10 +63,18 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Health check: `GET http://localhost:8000/health`
+Open `http://localhost:8000` for the project-ingestion UI, or use the API directly:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Service health check |
+| `/api/projects/upload` | POST | Upload a project folder (multipart) |
+| `/api/projects/from-path` | POST | Register a local directory for profiling |
+| `/api/projects/{id}/profile` | POST | Run deterministic profiling |
+| `/api/projects/{id}` | GET | Retrieve metadata and profile |
 
 Run tests:
 
 ```bash
-pytest
+pytest          # 47 tests — upload, profiling, API, security
 ```

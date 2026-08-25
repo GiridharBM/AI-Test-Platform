@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Test Platform</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin-bottom: .25rem; }
+  section { border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+  label { display: block; margin: .75rem 0 .25rem; }
+  input[type="text"] { width: 100%; padding: .45rem; box-sizing: border-box; }
+  button { padding: .5rem 1.1rem; cursor: pointer; }
+  .or { text-align: center; color: #888; margin: .5rem 0; }
+  table { border-collapse: collapse; margin-top: .35rem; }
+  td { padding: .15rem .9rem .15rem 0; }
+  .badge { display: inline-block; padding: .15rem .6rem; border-radius: 999px; background: #7aa2f73c; font-weight: 600; }
+  .warnings { color: #b8860b; white-space: pre-line; }
+  .error { color: #c0392b; }
+  #status { margin-top: .75rem; }
+</style>
+</head>
+<body>
+<h1>AI Test Platform</h1>
+
+<section id="add-project">
+  <h2>Add Project</h2>
+  <label for="folderInput">Select project folder:</label>
+  <input type="file" id="folderInput" webkitdirectory multiple>
+
+  <div class="or">OR</div>
+
+  <label for="pathInput">Local project path:</label>
+  <input type="text" id="pathInput" placeholder="D:\Projects\my-project">
+
+  <p><button id="analyzeBtn">Analyze Project</button></p>
+  <div id="status"></div>
+</section>
+
+<section id="result" hidden>
+  <h2>Project: <span id="pName"></span></h2>
+  <h3>Languages</h3><table id="tLangs"></table>
+  <h3>Files</h3><table id="tFiles"></table>
+  <h3>Code</h3><table id="tCode"></table>
+  <p>API endpoints detected: <strong id="pApi"></strong></p>
+  <h3>Complexity</h3><p><span class="badge" id="pComplexity"></span></p>
+  <ul id="pReasons"></ul>
+  <h3>Warnings</h3><p class="warnings" id="pWarnings">None</p>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const status = (msg, isError = false) => {
+  $("status").innerHTML = `<span class="${isError ? "error" : ""}">${msg}</span>`;
+};
+
+async function analyzeFolder() {
+  const input = $("folderInput");
+  if (!input.files.length) return false;
+  const fd = new FormData();
+  for (const file of input.files) {
+    const rel = file.webkitRelativePath || file.name;
+    fd.append("files", file, rel);
+    fd.append("paths", rel);
+  }
+  status(`Uploading ${input.files.length} files...`);
+  const res = await fetch("/api/projects/upload", { method: "POST", body: fd });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()).project_id;
+}
+
+async function analyzePath() {
+  const path = $("pathInput").value.trim();
+  if (!path) return false;
+  const res = await fetch("/api/projects/from-path", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()).project_id;
+}
+
+function row(k, v) { return `<tr><td>${k}</td><td>${v}</td></tr>`; }
+
+function render(p) {
+  $("pName").textContent = p.name;
+  $("tLangs").innerHTML = p.languages.map(l =>
+    row(l.name, `${l.percentage}% (${l.files} files, ${l.source_lines} lines)`)).join("") || "<tr><td>None detected</td></tr>";
+  const m = p.metrics;
+  $("tFiles").innerHTML =
+    row("Total", m.total_files) + row("Source", m.source_files) +
+    row("Tests", m.test_files) + row("Documentation", m.documentation_files) +
+    row("Configuration", m.configuration_files);
+  $("tCode").innerHTML =
+    row("Functions", m.functions ?? "n/a") + row("Classes", m.classes ?? "n/a") +
+    row("Source lines", m.source_lines);
+  $("pApi").textContent = p.api.endpoints_detected;
+  $("pComplexity").textContent = p.complexity.level.toUpperCase();
+  $("pReasons").innerHTML = p.complexity.reasons.map(r => `<li>${r}</li>`).join("");
+  $("pWarnings").textContent = p.warnings.length ? p.warnings.join("\n") : "None";
+  $("result").hidden = false;
+}
+
+$("analyzeBtn").addEventListener("click", async () => {
+  try {
+    $("result").hidden = true;
+    let pid = await analyzeFolder();
+    if (!pid) pid = await analyzePath();
+    if (!pid) { status("Select a folder or enter a local path first.", true); return; }
+    status("Profiling...");
+    const res = await fetch(`/api/projects/${pid}/profile`, { method: "POST" });
+    if (!res.ok) throw new Error(await res.text());
+    render(await res.json());
+    status("Done.");
+  } catch (err) {
+    status(`Failed: ${err.message}`, true);
+  }
+});
+</script>
+</body>
+</html>
