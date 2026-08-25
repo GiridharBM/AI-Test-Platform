@@ -94,6 +94,42 @@ def plan_project(project_id: str):
     return plan
 
 
+@router.post("/{project_id}/generate")
+def generate_project(project_id: str):
+    """Generate deterministic test scaffolds from the test plan.
+
+    Requires a test plan (run /plan first). Produces syntactically valid
+    Python test files with NotImplementedError placeholders.
+    """
+    from app.models.codemap import CodeMap
+    from app.models.project import ProjectProfile as Profile
+    from app.models.test_plan import TestPlan
+    from app.services.test_generator import generate_test_scaffolds, write_generated_files
+
+    raw_plan = ingestion.read_test_plan(config.WORKSPACE_DIR, project_id)
+    if not raw_plan:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Test plan not found. Run /plan first.")
+    plan = TestPlan.model_validate_json(raw_plan)
+
+    raw_codemap = ingestion.read_codemap(config.WORKSPACE_DIR, project_id)
+    if not raw_codemap:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="CodeMap not found. Run /discover first.")
+    codemap = CodeMap.model_validate_json(raw_codemap)
+
+    raw_profile = ingestion.read_profile(config.WORKSPACE_DIR, project_id)
+    if not raw_profile:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Profile not found. Run /profile first.")
+    profile = Profile.model_validate_json(raw_profile)
+
+    result = generate_test_scaffolds(plan, codemap, profile)
+    write_generated_files(result, config.WORKSPACE_DIR)
+    ingestion.save_test_generation(config.WORKSPACE_DIR, result.model_dump_json())
+    return result
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -118,7 +154,7 @@ def _read_python_files(root: Path) -> list[tuple[str, str]]:
 
 @router.get("/{project_id}", response_model=ProjectDetails)
 def get_project(project_id: str) -> ProjectDetails:
-    """Retrieve project metadata, profile, code map, and test plan if generated."""
+    """Retrieve project metadata, profile, code map, test plan, and generated tests."""
     meta = ingestion.read_meta(config.WORKSPACE_DIR, project_id)
     raw_profile = ingestion.read_profile(config.WORKSPACE_DIR, project_id)
     profile = ProjectProfile.model_validate_json(raw_profile) if raw_profile else None
@@ -132,4 +168,12 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_plan:
         from app.models.test_plan import TestPlan
         test_plan = TestPlan.model_validate_json(raw_plan)
-    return ProjectDetails(**meta.model_dump(), profile=profile, codemap=codemap, test_plan=test_plan)
+    raw_gen = ingestion.read_test_generation(config.WORKSPACE_DIR, project_id)
+    test_generation = None
+    if raw_gen:
+        from app.models.test_generation import TestGenerationResult
+        test_generation = TestGenerationResult.model_validate_json(raw_gen)
+    return ProjectDetails(
+        **meta.model_dump(), profile=profile, codemap=codemap,
+        test_plan=test_plan, test_generation=test_generation,
+    )

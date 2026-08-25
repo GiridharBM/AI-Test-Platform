@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.models.codemap import CodeMap
+from app.models.test_generation import TestGenerationResult
 from app.models.test_plan import TestPlan
 
 OriginMode = Literal["upload", "path"]
@@ -116,11 +117,12 @@ class ProjectMeta(BaseModel):
 
 
 class ProjectDetails(ProjectMeta):
-    """GET /api/projects/{id} response: metadata plus profile, codemap, and test plan."""
+    """GET /api/projects/{id} response: metadata plus profile, code map, test plan, and generated tests."""
 
     profile: Optional[ProjectProfile] = None
     codemap: Optional[CodeMap] = None  # populated after discover
     test_plan: Optional[TestPlan] = None  # populated after plan
+    test_generation: Optional[TestGenerationResult] = None  # populated after generate
 
 
 class LocalPathRequest(BaseModel):

@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 4)
+## Current Foundation (Implemented — Milestone 5)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -16,6 +16,7 @@ Status legend:
 │  POST /api/projects/{id}/profile              │
 │  POST /api/projects/{id}/discover             │
 │  POST /api/projects/{id}/plan                 │
+│  POST /api/projects/{id}/generate             │
 │  GET  /api/projects/{id}                      │
 └─────────────────────┬────────────────────────┘
                       │ HTTP
@@ -28,6 +29,7 @@ Status legend:
 │    project.py          Pydantic schemas (M2)  │
 │    codemap.py          Code map schemas (M3)  │
 │    test_plan.py        Test plan schemas (M4) │
+│    test_generation.py  Generated test schemas  │
 │  app/services/                                 │
 │    project_ingestion.py  upload + path mgmt   │
 │    project_profiler.py   deterministic scan   │
@@ -37,6 +39,7 @@ Status legend:
 │    call_graph.py        function-level calls   │
 │    risk_scorer.py       target risk scoring   │
 │    test_planner.py      plan generation       │
+│    test_generator.py    scaffold generation   │
 │  app/agents/        future home of agents     │
 │  app/code_intelligence/  future               │
 │  app/execution/      future (Docker sandbox)  │
@@ -45,7 +48,17 @@ Status legend:
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 4):
+Implemented components (Milestone 5):
+
+- **Deterministic test scaffold generation** — template-based production of syntactically valid Python test files from the test plan
+- **Framework-aware output** — generates pytest-style or unittest-style scaffolds based on detected framework
+- **Edge-case test functions** — each TestSpec edge case becomes an individual test function
+- **Async target scaffolding** — pytest.mark.asyncio markers for async targets
+- **Class-based method scaffolds** — proper setUp and instantiation patterns for method targets
+- **Safe placeholders** — NotImplementedError bodies ensure tests fail safely without executing untrusted code
+- **Generated test persistence** — files written to workspace, metadata under .meta/test_generation.json
+
+### Milestone 4 (also implemented)
 
 - **Test plan generation** — deterministic, prioritised test specifications derived from code map and profile
 - **Risk scoring** — configurable weighted scoring using test coverage, argument count, async, docstrings, public method, project complexity, mapping confidence, and fan-in
@@ -110,4 +123,4 @@ Implemented components (Milestone 4):
 
 ## Not Implemented
 
-No LLM integration, RAG, embeddings, vector database, agents, test generation, Docker execution, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Test planning is deterministic and rule-based; LLM-powered planning is not yet introduced. These are introduced incrementally after each milestone is verified.
+No LLM integration, RAG, embeddings, vector database, agents, AI-powered test generation, Docker execution, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. These are introduced incrementally after each milestone is verified.

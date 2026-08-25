@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 4 — Deterministic Test Plan Generation**
+> **Milestone 5 — Deterministic Test Scaffold Generation**
 
-The platform can ingest and profile projects, produce a structured code map, and now generate prioritised test plans. Given the code map and project profile, a deterministic rule-based planner analyses every testable target, scores its risk, generates edge-case specifications, and returns a scored, ordered plan of what tests to write.
+The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, and now produce deterministic test scaffolds. Given a test plan, code map, and project profile, a template-based generator produces syntactically valid Python test files with correct imports, edge-case test functions, async markers, and NotImplementedError placeholders ready for human or AI completion.
 
 ## Long-Term Vision
 
@@ -73,10 +73,11 @@ Open `http://localhost:8000` for the project-ingestion UI, or use the API direct
 | `/api/projects/{id}/profile` | POST | Run deterministic profiling |
 | `/api/projects/{id}/discover` | POST | Run test discovery and build code map |
 | `/api/projects/{id}/plan` | POST | Generate prioritised test plan |
-| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, and test plan |
+| `/api/projects/{id}/generate` | POST | Generate deterministic test scaffolds |
+| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, and generated tests |
 
 Run tests:
 
 ```bash
-pytest          # 136 tests — ingestion, profiling, discovery, planning, API, security
+pytest          # 162 tests — ingestion, profiling, discovery, planning, generation, API, security
 ```

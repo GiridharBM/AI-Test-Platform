@@ -152,6 +152,21 @@ def read_test_plan(workspace: Path, project_id: str) -> str | None:
     return plan_path.read_text(encoding="utf-8")
 
 
+def save_test_generation(workspace: Path, gen_json: str) -> None:
+    """Persist generated test scaffolds metadata under .meta/."""
+    pid = json.loads(gen_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "test_generation.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(gen_json, encoding="utf-8")
+
+
+def read_test_generation(workspace: Path, project_id: str) -> str | None:
+    gen_path = project_dir(workspace, project_id) / _META_DIR / "test_generation.json"
+    if not gen_path.is_file():
+        return None
+    return gen_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,
