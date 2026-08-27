@@ -95,3 +95,11 @@ MAX_GENERATED_FILES = 1_000
 MAX_GENERATED_FUNCTIONS = 10_000
 MAX_SCAFFOLD_CONTENT_BYTES = 512 * 1024  # 512 KiB per generated file
 MAX_EDGE_CASE_TESTS_PER_TARGET = 20
+
+# --- Test execution limits ---------------------------------------------------
+EXECUTION_TIMEOUT_SECONDS = 120           # max seconds per execution run
+EXECUTION_MEMORY_LIMIT_MB = 512           # Docker --memory
+EXECUTION_CPU_LIMIT = 1.0                 # Docker --cpus
+EXECUTION_MAX_OUTPUT_BYTES = 1_048_576    # 1 MiB stdout/stderr capture limit
+EXECUTION_IMAGE_NAME = "ai-test-platform-testrunner"
+EXECUTION_DOCKERFILE = "docker/Dockerfile.testrunner"

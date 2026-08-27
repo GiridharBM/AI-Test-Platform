@@ -167,6 +167,22 @@ def read_test_generation(workspace: Path, project_id: str) -> str | None:
     return gen_path.read_text(encoding="utf-8")
 
 
+def save_execution(workspace: Path, exec_json: str) -> None:
+    """Persist execution results under .meta/execution.json."""
+    pid = json.loads(exec_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "execution.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(exec_json, encoding="utf-8")
+
+
+def read_execution(workspace: Path, project_id: str) -> str | None:
+    """Read persisted execution results. Returns None if not found."""
+    exec_path = project_dir(workspace, project_id) / _META_DIR / "execution.json"
+    if not exec_path.is_file():
+        return None
+    return exec_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,

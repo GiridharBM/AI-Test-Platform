@@ -130,6 +130,27 @@ def generate_project(project_id: str):
     return result
 
 
+@router.post("/{project_id}/execute")
+def execute_project(project_id: str):
+    """Execute generated test scaffolds in a Docker sandbox.
+
+    Requires generated tests (run /generate first). Runs pytest inside
+    an isolated container with no network access and bounded resources.
+    """
+    meta = ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    raw_gen = ingestion.read_test_generation(config.WORKSPACE_DIR, project_id)
+    if not raw_gen:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="No generated tests. Run /generate first.")
+
+    from app.execution.runner import execute_tests
+    generated_dir = Path(config.WORKSPACE_DIR) / project_id / "generated_tests"
+    exec_result = execute_tests(generated_dir, project_id)
+    ingestion.save_execution(config.WORKSPACE_DIR, exec_result.model_dump_json())
+    return exec_result
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -154,7 +175,7 @@ def _read_python_files(root: Path) -> list[tuple[str, str]]:
 
 @router.get("/{project_id}", response_model=ProjectDetails)
 def get_project(project_id: str) -> ProjectDetails:
-    """Retrieve project metadata, profile, code map, test plan, and generated tests."""
+    """Retrieve project metadata, profile, code map, test plan, generated tests, and execution results."""
     meta = ingestion.read_meta(config.WORKSPACE_DIR, project_id)
     raw_profile = ingestion.read_profile(config.WORKSPACE_DIR, project_id)
     profile = ProjectProfile.model_validate_json(raw_profile) if raw_profile else None
@@ -173,7 +194,13 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_gen:
         from app.models.test_generation import TestGenerationResult
         test_generation = TestGenerationResult.model_validate_json(raw_gen)
+    raw_exec = ingestion.read_execution(config.WORKSPACE_DIR, project_id)
+    execution = None
+    if raw_exec:
+        from app.models.execution import TestExecutionResult
+        execution = TestExecutionResult.model_validate_json(raw_exec)
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
+        execution=execution,
     )

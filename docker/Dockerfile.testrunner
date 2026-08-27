@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir pytest && \
+    groupadd -r runner && useradd -r -g runner -d /tests runner
+
+WORKDIR /tests
+RUN chown runner:runner /tests
+
+USER runner
+
+ENTRYPOINT ["pytest"]

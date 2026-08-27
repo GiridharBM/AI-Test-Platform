@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.models.codemap import CodeMap
+from app.models.execution import TestExecutionResult
 from app.models.test_generation import TestGenerationResult
 from app.models.test_plan import TestPlan
 
@@ -117,12 +118,13 @@ class ProjectMeta(BaseModel):
 
 
 class ProjectDetails(ProjectMeta):
-    """GET /api/projects/{id} response: metadata plus profile, code map, test plan, and generated tests."""
+    """GET /api/projects/{id} response: metadata plus profile, code map, test plan, generated tests, and execution results."""
 
     profile: Optional[ProjectProfile] = None
     codemap: Optional[CodeMap] = None  # populated after discover
     test_plan: Optional[TestPlan] = None  # populated after plan
     test_generation: Optional[TestGenerationResult] = None  # populated after generate
+    execution: Optional[TestExecutionResult] = None  # populated after execute
 
 
 class LocalPathRequest(BaseModel):

@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 5)
+## Current Foundation (Implemented — Milestone 6)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -17,6 +17,7 @@ Status legend:
 │  POST /api/projects/{id}/discover             │
 │  POST /api/projects/{id}/plan                 │
 │  POST /api/projects/{id}/generate             │
+│  POST /api/projects/{id}/execute              │
 │  GET  /api/projects/{id}                      │
 └─────────────────────┬────────────────────────┘
                       │ HTTP
@@ -30,6 +31,7 @@ Status legend:
 │    codemap.py          Code map schemas (M3)  │
 │    test_plan.py        Test plan schemas (M4) │
 │    test_generation.py  Generated test schemas  │
+│    execution.py        Execution result schemas│
 │  app/services/                                 │
 │    project_ingestion.py  upload + path mgmt   │
 │    project_profiler.py   deterministic scan   │
@@ -40,15 +42,25 @@ Status legend:
 │    risk_scorer.py       target risk scoring   │
 │    test_planner.py      plan generation       │
 │    test_generator.py    scaffold generation   │
+│  app/execution/                                 │
+│    runner.py            Docker sandbox runner  │
 │  app/agents/        future home of agents     │
 │  app/code_intelligence/  future               │
-│  app/execution/      future (Docker sandbox)  │
 │  app/evaluation/     future                   │
 │  workspace/          ingested project copies  │
+│ docker/                                        │
+│    Dockerfile.testrunner  test runner image    │
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 5):
+Implemented components (Milestone 6):
+
+- **Sandboxed test execution** — Docker-based isolated pytest execution with no network access
+- **Resource limits** — configurable timeout, memory, CPU, and output size
+- **Structured results** — per-file pass/fail/error status, stdout/stderr, duration, exit code
+- **Automatic cleanup** — temp directories and Docker containers removed after execution
+- **Docker-unavailable handling** — graceful degradation when Docker is not running
+- **Execution persistence** — results stored under .meta/execution.json
 
 - **Deterministic test scaffold generation** — template-based production of syntactically valid Python test files from the test plan
 - **Framework-aware output** — generates pytest-style or unittest-style scaffolds based on detected framework
@@ -123,4 +135,4 @@ Implemented components (Milestone 5):
 
 ## Not Implemented
 
-No LLM integration, RAG, embeddings, vector database, agents, AI-powered test generation, Docker execution, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. These are introduced incrementally after each milestone is verified.
+No LLM integration, RAG, embeddings, vector database, agents, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.

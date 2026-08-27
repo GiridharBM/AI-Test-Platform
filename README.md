@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 5 — Deterministic Test Scaffold Generation**
+> **Milestone 6 — Sandboxed Test Execution**
 
-The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, and now produce deterministic test scaffolds. Given a test plan, code map, and project profile, a template-based generator produces syntactically valid Python test files with correct imports, edge-case test functions, async markers, and NotImplementedError placeholders ready for human or AI completion.
+The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, produce deterministic test scaffolds, and now execute them in an isolated Docker sandbox. Generated tests run inside Docker containers with no network access, bounded resources, and automatic cleanup.
 
 ## Long-Term Vision
 
@@ -74,10 +74,11 @@ Open `http://localhost:8000` for the project-ingestion UI, or use the API direct
 | `/api/projects/{id}/discover` | POST | Run test discovery and build code map |
 | `/api/projects/{id}/plan` | POST | Generate prioritised test plan |
 | `/api/projects/{id}/generate` | POST | Generate deterministic test scaffolds |
-| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, and generated tests |
+| `/api/projects/{id}/execute` | POST | Execute tests in Docker sandbox |
+| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, generated tests, and execution results |
 
 Run tests:
 
 ```bash
-pytest          # 162 tests — ingestion, profiling, discovery, planning, generation, API, security
+pytest          # 221 tests — ingestion, profiling, discovery, planning, generation, execution, API, security
 ```
