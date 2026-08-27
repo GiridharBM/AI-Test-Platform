@@ -183,6 +183,22 @@ def read_execution(workspace: Path, project_id: str) -> str | None:
     return exec_path.read_text(encoding="utf-8")
 
 
+def save_diagnosis(workspace: Path, diagnosis_json: str) -> None:
+    """Persist diagnosis results under .meta/diagnosis.json."""
+    pid = json.loads(diagnosis_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "diagnosis.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(diagnosis_json, encoding="utf-8")
+
+
+def read_diagnosis(workspace: Path, project_id: str) -> str | None:
+    """Read persisted diagnosis results. Returns None if not found."""
+    diag_path = project_dir(workspace, project_id) / _META_DIR / "diagnosis.json"
+    if not diag_path.is_file():
+        return None
+    return diag_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,

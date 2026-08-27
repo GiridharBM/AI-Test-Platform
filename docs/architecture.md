@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 6)
+## Current Foundation (Implemented — Milestone 7)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -18,6 +18,7 @@ Status legend:
 │  POST /api/projects/{id}/plan                 │
 │  POST /api/projects/{id}/generate             │
 │  POST /api/projects/{id}/execute              │
+│  POST /api/projects/{id}/diagnose             │
 │  GET  /api/projects/{id}                      │
 └─────────────────────┬────────────────────────┘
                       │ HTTP
@@ -44,7 +45,9 @@ Status legend:
 │    test_generator.py    scaffold generation   │
 │  app/execution/                                 │
 │    runner.py            Docker sandbox runner  │
-│  app/agents/        future home of agents     │
+│  app/agents/                                   │
+│    diagnose.py          deterministic diagnosis│
+│    llm.py               optional AI boundary   │
 │  app/code_intelligence/  future               │
 │  app/evaluation/     future                   │
 │  workspace/          ingested project copies  │
@@ -53,7 +56,17 @@ Status legend:
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 6):
+Implemented components (Milestone 7):
+
+- **Deterministic failure diagnosis** — parses M6 execution output into structured findings (what failed, how it failed, category, severity)
+- **Failure classification** — deterministic categories: assertion, exception, import_error, timeout, collection_error, syntax_error, unknown
+- **Stable failure fingerprinting** — path-normalised SHA-256 signatures for repeatable diagnostics
+- **Code map linkage** — read-only resolution of failures to source locations with evidence-based confidence
+- **Optional local/private AI boundary** — thin `llm.analyze(context)` interface, off by default, no external calls, no AI infrastructure
+- **Diagnosis persistence** — structured results under .meta/diagnosis.json
+- **Diagnosis API** — POST /{id}/diagnose and diagnosis on GET /{id}
+
+Milestone 6 (also implemented):
 
 - **Sandboxed test execution** — Docker-based isolated pytest execution with no network access
 - **Resource limits** — configurable timeout, memory, CPU, and output size
@@ -113,21 +126,19 @@ Implemented components (Milestone 6):
 
 ## Planned (Upcoming Milestones)
 
-- **Test generation** — LLM-powered unit, integration, API, edge-case, security-oriented test creation
-- **Test execution** — sandboxed test runs in Docker containers
-- **Failure diagnosis** — AI-driven analysis of test failures and potential bug detection
+- **Test generation** — LLM-powered unit, integration, API, edge-case, security-oriented test creation (M8+)
+- **AI-powered failure analysis** — the optional local/private AI diagnosis layer (interface exists in M7; real model inference planned)
 - **Repository-level code understanding** — Tree-sitter based parsing, code-aware RAG
 - **Vector storage** — Qdrant for embeddings
 - **LLM inference** — open-source coding LLMs served locally (NVIDIA RTX 5060) with GPU acceleration via PyTorch / Hugging Face Transformers; private NVIDIA DGX B200 for larger experiments
 - **Autonomous agents** — test generation, failure analysis, regeneration
-- **Sandboxed execution** — Docker-based isolated test running
 - **Dashboard** — Next.js + React + TypeScript + Tailwind CSS frontend with live agent activity
 - **Java/JS/TS syntax metrics** — Tree-sitter integration for functions/classes beyond Python
 
 ## Future/Research
 
 - Mutation testing strategies
-- Sandboxed bug detection and automated code repair
+- Sandboxed bug detection and automated code repair (Improve milestone)
 - Human-in-the-loop approval workflow before modifying original projects
 - CPU/GPU benchmarking suite
 - GitHub repository integration
@@ -135,4 +146,4 @@ Implemented components (Milestone 6):
 
 ## Not Implemented
 
-No LLM integration, RAG, embeddings, vector database, agents, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.
+No RAG, embeddings, vector database, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestone 7 adds a deterministic failure-diagnosis core plus a thin, off-by-default local/private AI boundary (`llm.analyze`); it does **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core import config
 from app.models.project import LocalPathRequest, ProjectDetails, ProjectMeta, ProjectProfile
@@ -151,6 +151,31 @@ def execute_project(project_id: str):
     return exec_result
 
 
+@router.post("/{project_id}/diagnose")
+def diagnose_project(project_id: str):
+    """Run deterministic failure diagnosis on a completed execution.
+
+    Requires an execution result (run /execute first). Produces a structured
+    DiagnosisResult: what failed, category, fingerprint, linked source
+    locations, severity, and optionally (when DIAGNOSIS_AI_ENABLED) a
+    local/private AI potential-bug analysis.
+    """
+    # project exists? (read_meta raises 404 if not)
+    ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_execution(config.WORKSPACE_DIR, project_id) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No execution result. Run /execute first.",
+        )
+
+    from app.agents.diagnose import diagnose_project as run_diagnosis
+
+    result = run_diagnosis(project_id)
+    ingestion.save_diagnosis(config.WORKSPACE_DIR, result.model_dump_json())
+    return result
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -199,8 +224,13 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_exec:
         from app.models.execution import TestExecutionResult
         execution = TestExecutionResult.model_validate_json(raw_exec)
+    raw_diag = ingestion.read_diagnosis(config.WORKSPACE_DIR, project_id)
+    diagnosis = None
+    if raw_diag:
+        from app.models.diagnosis import DiagnosisResult
+        diagnosis = DiagnosisResult.model_validate_json(raw_diag)
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
-        execution=execution,
+        execution=execution, diagnosis=diagnosis,
     )

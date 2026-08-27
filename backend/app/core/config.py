@@ -103,3 +103,8 @@ EXECUTION_CPU_LIMIT = 1.0                 # Docker --cpus
 EXECUTION_MAX_OUTPUT_BYTES = 1_048_576    # 1 MiB stdout/stderr capture limit
 EXECUTION_IMAGE_NAME = "ai-test-platform-testrunner"
 EXECUTION_DOCKERFILE = "docker/Dockerfile.testrunner"
+
+# --- Diagnosis limits (Milestone 7) ------------------------------------------
+DIAGNOSIS_AI_ENABLED = False              # local/private AI diagnosis is opt-in
+DIAGNOSIS_MAX_FINDINGS = 100              # cap on findings per diagnosis run
+DIAGNOSIS_MAX_TRACEBACK_BYTES = 32_768     # truncate stored tracebacks to this

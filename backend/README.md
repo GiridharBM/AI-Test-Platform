@@ -29,9 +29,9 @@ pytest
 
 - `app/main.py` — FastAPI application entry point
 - `app/api/` — API routers (future)
-- `app/agents/` — autonomous agent logic (future)
+- `app/agents/` — deterministic failure diagnosis + optional local/private AI boundary (M7)
 - `app/code_intelligence/` — parsing and code understanding (future)
-- `app/execution/` — sandboxed test execution (future)
+- `app/execution/` — sandboxed test execution (M6)
 - `app/evaluation/` — coverage, mutation testing, benchmarks (future)
 - `app/models/` — data models/schemas (future)
 - `app/services/` — business logic (future)
