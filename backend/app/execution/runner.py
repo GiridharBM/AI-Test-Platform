@@ -171,26 +171,43 @@ def execute_tests(
         test_dest = work_dir / "tests"
         shutil.copytree(generated_test_dir, test_dest)
 
+        # Mount a READ-ONLY copy of the project source alongside the tests so
+        # improved generated tests (e.g. `from app import add`) can import the
+        # scanned code inside the sandbox. The copy lives in the same temp exec
+        # dir and is mounted `:ro`; the host's real source is never mounted
+        # directly and cannot be modified by the (read-only) container.
+        source_dest = work_dir / "source"
+        source_root = Path(config.WORKSPACE_DIR) / project_id / "source"
+        have_source = source_root.is_dir()
+        if have_source:
+            shutil.copytree(source_root, source_dest, symlinks=False)
+
         container_name = f"exec_{project_id}"
         abs_tests = str(test_dest.resolve())
+        exec_args = [
+            "docker", "run",
+            "--rm",
+            "--name", container_name,
+            "--network", "none",
+            "--memory", memory_limit,
+            "--cpus", str(cpu_limit),
+            "--read-only",
+            "--tmpfs", "/tmp:size=64m",
+            "-v", f"{abs_tests}:/tests:ro",
+            "-w", "/tests",
+        ]
+        if have_source:
+            abs_source = str(source_dest.resolve())
+            exec_args += [
+                "-v", f"{abs_source}:/source:ro",
+                "-e", "PYTHONPATH=/source",
+            ]
+        exec_args += [image, "-v", "--tb=short", "--no-header", "-q"]
 
         start = time.monotonic()
         try:
             result = subprocess.run(
-                [
-                    "docker", "run",
-                    "--rm",
-                    "--name", container_name,
-                    "--network", "none",
-                    "--memory", memory_limit,
-                    "--cpus", str(cpu_limit),
-                    "--read-only",
-                    "--tmpfs", "/tmp:size=64m",
-                    "-v", f"{abs_tests}:/tests:ro",
-                    "-w", "/tests",
-                    image,
-                    "-v", "--tb=short", "--no-header", "-q",
-                ],
+                exec_args,
                 capture_output=True,
                 timeout=timeout + 10,  # extra buffer for Docker overhead
             )

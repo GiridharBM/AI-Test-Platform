@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.models.codemap import CodeMap
 from app.models.diagnosis import DiagnosisResult
 from app.models.execution import TestExecutionResult
+from app.models.improvement import ImprovementResult
 from app.models.test_generation import TestGenerationResult
 from app.models.test_plan import TestPlan
 
@@ -127,6 +128,7 @@ class ProjectDetails(ProjectMeta):
     test_generation: Optional[TestGenerationResult] = None  # populated after generate
     execution: Optional[TestExecutionResult] = None  # populated after execute
     diagnosis: Optional[DiagnosisResult] = None  # populated after diagnose
+    improvement: Optional[ImprovementResult] = None  # populated after improve
 
 
 class LocalPathRequest(BaseModel):

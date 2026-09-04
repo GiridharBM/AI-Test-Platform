@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 7)
+## Current Foundation (Implemented — Milestone 8)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -19,6 +19,7 @@ Status legend:
 │  POST /api/projects/{id}/generate             │
 │  POST /api/projects/{id}/execute              │
 │  POST /api/projects/{id}/diagnose             │
+│  POST /api/projects/{id}/improve              │
 │  GET  /api/projects/{id}                      │
 └─────────────────────┬────────────────────────┘
                       │ HTTP
@@ -33,6 +34,8 @@ Status legend:
 │    test_plan.py        Test plan schemas (M4) │
 │    test_generation.py  Generated test schemas  │
 │    execution.py        Execution result schemas│
+│    diagnosis.py        Diagnosis schemas (M7) │
+│    improvement.py      Improvement schemas (M8)│
 │  app/services/                                 │
 │    project_ingestion.py  upload + path mgmt   │
 │    project_profiler.py   deterministic scan   │
@@ -43,6 +46,7 @@ Status legend:
 │    risk_scorer.py       target risk scoring   │
 │    test_planner.py      plan generation       │
 │    test_generator.py    scaffold generation   │
+│    improvement.py       deterministic improve│
 │  app/execution/                                 │
 │    runner.py            Docker sandbox runner  │
 │  app/agents/                                   │
@@ -56,7 +60,14 @@ Status legend:
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 7):
+Implemented components (Milestone 8):
+
+- **Deterministic test improvement** — consumes a `DiagnosisResult` plus the project's CodeMap, TestPlan, and generated tests; locates `NotImplementedError` scaffold placeholders and replaces them with evidence-based import-and-invoke bodies
+- **Placeholder regeneration** — a deterministic body (correct module import plus invocation with literals taken only from the M4 TestPlan's explicit edge-case evidence) written into the matching generated-test function; sibling edge-case helpers untouched
+- **No fabricated behavior** — never invents inputs (no `add(0, 0)`), never asserts a behavioral result, never suppresses failures; reports `blocked`/`no_change` with an explicit reason when evidence is insufficient (no plan-pinned input, unresolvable target, class/method instantiation, non-`NotImplementedError` categories)
+- **Sandboxed writes** — only under `workspace/{id}/generated_tests/`, `*.py` only, path-guarded, size-limited, atomic; `source/` and `.meta/` never written
+- **Improvement persistence** — structured results under `.meta/improvement.json`
+- **Improvement API** — POST /{id}/improve and improvement on GET /{id}; does not trigger a re-test loop (Re-test is the future M9 milestone; source code repair remains human-gated and out of scope)
 
 - **Deterministic failure diagnosis** — parses M6 execution output into structured findings (what failed, how it failed, category, severity)
 - **Failure classification** — deterministic categories: assertion, exception, import_error, timeout, collection_error, syntax_error, unknown
@@ -69,6 +80,7 @@ Implemented components (Milestone 7):
 Milestone 6 (also implemented):
 
 - **Sandboxed test execution** — Docker-based isolated pytest execution with no network access
+- **Read-only source bind** — when a project has a `source/` snapshot, a read-only *copy* of it is mounted at `/source` (with `PYTHONPATH=/source`) so improved generated tests (e.g. `from app import add`) can import scanned code; the host source is never mounted directly and cannot be modified by the read-only container
 - **Resource limits** — configurable timeout, memory, CPU, and output size
 - **Structured results** — per-file pass/fail/error status, stdout/stderr, duration, exit code
 - **Automatic cleanup** — temp directories and Docker containers removed after execution
@@ -126,7 +138,7 @@ Milestone 6 (also implemented):
 
 ## Planned (Upcoming Milestones)
 
-- **Test generation** — LLM-powered unit, integration, API, edge-case, security-oriented test creation (M8+)
+- **Test generation** — LLM-powered unit, integration, API, edge-case, security-oriented test creation (future; M8 adds only the deterministic — non-LLM — generated-test regeneration path)
 - **AI-powered failure analysis** — the optional local/private AI diagnosis layer (interface exists in M7; real model inference planned)
 - **Repository-level code understanding** — Tree-sitter based parsing, code-aware RAG
 - **Vector storage** — Qdrant for embeddings
@@ -146,4 +158,4 @@ Milestone 6 (also implemented):
 
 ## Not Implemented
 
-No RAG, embeddings, vector database, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestone 7 adds a deterministic failure-diagnosis core plus a thin, off-by-default local/private AI boundary (`llm.analyze`); it does **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.
+No RAG, embeddings, vector database, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestones 7 and 8 add deterministic failure-diagnosis and deterministic generated-test-repair cores plus a thin, off-by-default local/private AI boundary (`llm.analyze`); they do **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. M8 deterministic improvement only regenerates the *generated tests'* scaffold bodies — it never modifies or repairs original source code (sandboxed code repair remains a human-gated future milestone). Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.

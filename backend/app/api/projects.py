@@ -176,6 +176,31 @@ def diagnose_project(project_id: str):
     return result
 
 
+@router.post("/{project_id}/improve")
+def improve_project(project_id: str):
+    """Improve failing generated tests deterministically from a diagnosis.
+
+    Requires a diagnosis result (run /diagnose first). Replaces safe
+    NotImplementedError scaffold placeholders with import-and-invoke bodies
+    whose inputs come only from the TestPlan's explicit edge-case evidence —
+    never fabricating inputs or assertions and only writing to the
+    generated-tests workspace (source/.meta are untouched).
+    """
+    ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_diagnosis(config.WORKSPACE_DIR, project_id) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No diagnosis result. Run /diagnose first.",
+        )
+
+    from app.services.improvement import improve_project as run_improvement
+
+    result = run_improvement(project_id)
+    ingestion.save_improvement(config.WORKSPACE_DIR, result.model_dump_json())
+    return result
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -229,8 +254,14 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_diag:
         from app.models.diagnosis import DiagnosisResult
         diagnosis = DiagnosisResult.model_validate_json(raw_diag)
+    raw_improve = ingestion.read_improvement(config.WORKSPACE_DIR, project_id)
+    improvement = None
+    if raw_improve:
+        from app.models.improvement import ImprovementResult
+        improvement = ImprovementResult.model_validate_json(raw_improve)
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
         execution=execution, diagnosis=diagnosis,
+        improvement=improvement,
     )

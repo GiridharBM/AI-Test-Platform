@@ -199,6 +199,22 @@ def read_diagnosis(workspace: Path, project_id: str) -> str | None:
     return diag_path.read_text(encoding="utf-8")
 
 
+def save_improvement(workspace: Path, improvement_json: str) -> None:
+    """Persist improvement results under .meta/improvement.json."""
+    pid = json.loads(improvement_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "improvement.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(improvement_json, encoding="utf-8")
+
+
+def read_improvement(workspace: Path, project_id: str) -> str | None:
+    """Read persisted improvement results. Returns None if not found."""
+    impl_path = project_dir(workspace, project_id) / _META_DIR / "improvement.json"
+    if not impl_path.is_file():
+        return None
+    return impl_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,

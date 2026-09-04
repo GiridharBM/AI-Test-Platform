@@ -33,6 +33,6 @@ pytest
 - `app/code_intelligence/` — parsing and code understanding (future)
 - `app/execution/` — sandboxed test execution (M6)
 - `app/evaluation/` — coverage, mutation testing, benchmarks (future)
-- `app/models/` — data models/schemas (future)
-- `app/services/` — business logic (future)
+- `app/models/` — data models/schemas, including failure diagnosis (M7) and test improvement (M8)
+- `app/services/` — business logic, including deterministic test improvement (M8)
 - `tests/` — pytest suite

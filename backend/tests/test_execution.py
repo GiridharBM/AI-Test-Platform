@@ -456,6 +456,83 @@ class TestRunnerSecurity:
             assert source.startswith(_tf.gettempdir())
 
 
+class TestRunnerSourceMount:
+    """F2: a read-only copy of project source is mounted so improved tests
+    (e.g. `from app import add`) can import scanned code in the sandbox."""
+
+    @patch("app.execution.runner._docker_available", return_value=True)
+    @patch("app.execution.runner._ensure_image")
+    @patch("app.execution.runner.subprocess.run")
+    def test_source_copy_mounted_readonly_with_pythonpath(self, mock_run, _mock_img, _mock_docker, tmp_path):
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_app.py").write_text("def test_add():\n    from app import add\n")
+        src = Path(config.WORKSPACE_DIR) / "proj" / "source"
+        src.mkdir(parents=True)
+        (src / "app.py").write_text("def add(a, b):\n    return a + b\n")
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+        execute_tests(test_dir, "proj")
+
+        docker_run_call = next(
+            call for call in mock_run.call_args_list
+            if call.args and call.args[0] and call.args[0][0:2] == ["docker", "run"]
+        )
+        cmd = docker_run_call.args[0]
+        # a /source mount exists and is read-only
+        source_mounts = [
+            cmd[i + 1] for i, arg in enumerate(cmd)
+            if arg == "-v" and i + 1 < len(cmd)
+            and cmd[i + 1].endswith(":ro")
+            and cmd[i + 1].rsplit(":", 2)[1] == "/source"
+        ]
+        assert len(source_mounts) == 1
+        mount = source_mounts[0]
+        assert mount.endswith(":ro")
+        # the mounted source is a copy under a temp exec dir, not the host source
+        import tempfile as _tf
+        assert mount.rsplit(":", 2)[0].replace("\\", "/").startswith(_tf.gettempdir().replace("\\", "/"))
+        assert "-e" in cmd
+        idx = cmd.index("-e")
+        assert cmd[idx + 1] == "PYTHONPATH=/source"
+
+    @patch("app.execution.runner._docker_available", return_value=True)
+    @patch("app.execution.runner._ensure_image")
+    @patch("app.execution.runner.subprocess.run")
+    def test_no_source_dir_means_no_source_mount(self, mock_run, _mock_img, _mock_docker, tmp_path):
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+        execute_tests(test_dir, "proj")
+        docker_run_call = next(
+            call for call in mock_run.call_args_list
+            if call.args and call.args[0] and call.args[0][0:2] == ["docker", "run"]
+        )
+        cmd = docker_run_call.args[0]
+        assert "/source" not in cmd
+        assert "PYTHONPATH=/source" not in cmd
+
+    @patch("app.execution.runner._docker_available", return_value=True)
+    @patch("app.execution.runner._ensure_image")
+    @patch("app.execution.runner.subprocess.run")
+    def test_source_and_tests_both_readonly(self, mock_run, _mock_img, _mock_docker, tmp_path):
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        src = Path(config.WORKSPACE_DIR) / "proj" / "source"
+        src.mkdir(parents=True)
+        (src / "app.py").write_text("x = 1\n")
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+        execute_tests(test_dir, "proj")
+        docker_run_call = next(
+            call for call in mock_run.call_args_list
+            if call.args and call.args[0] and call.args[0][0:2] == ["docker", "run"]
+        )
+        cmd = docker_run_call.args[0]
+        volume_args = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v" and i + 1 < len(cmd) and ":" in cmd[i + 1]]
+        assert len(volume_args) == 2  # /tests + /source
+        for vol in volume_args:
+            assert vol.endswith(":ro")  # generated tests AND source are read-only
+
+
 # ── Config tests ─────────────────────────────────────────────────────
 
 class TestExecutionConfig:

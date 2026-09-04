@@ -108,3 +108,9 @@ EXECUTION_DOCKERFILE = "docker/Dockerfile.testrunner"
 DIAGNOSIS_AI_ENABLED = False              # local/private AI diagnosis is opt-in
 DIAGNOSIS_MAX_FINDINGS = 100              # cap on findings per diagnosis run
 DIAGNOSIS_MAX_TRACEBACK_BYTES = 32_768     # truncate stored tracebacks to this
+
+# --- Test improvement limits (Milestone 8) -----------------------------------
+IMPROVE_AI_ENABLED = False                # local/private AI improvement is opt-in
+IMPROVE_MAX_CHANGES = 100                 # cap on improvement changes per run
+IMPROVE_MAX_TEST_FILES = 1_000            # cap on generated test files improved
+IMPROVE_MAX_TEST_BYTES = 512 * 1024       # per improved file byte limit (512 KiB)
