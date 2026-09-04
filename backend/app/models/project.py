@@ -9,6 +9,7 @@ from app.models.codemap import CodeMap
 from app.models.diagnosis import DiagnosisResult
 from app.models.execution import TestExecutionResult
 from app.models.improvement import ImprovementResult
+from app.models.retest import ReTestResult
 from app.models.test_generation import TestGenerationResult
 from app.models.test_plan import TestPlan
 
@@ -129,6 +130,7 @@ class ProjectDetails(ProjectMeta):
     execution: Optional[TestExecutionResult] = None  # populated after execute
     diagnosis: Optional[DiagnosisResult] = None  # populated after diagnose
     improvement: Optional[ImprovementResult] = None  # populated after improve
+    retest: Optional[ReTestResult] = None  # populated after retest
 
 
 class LocalPathRequest(BaseModel):

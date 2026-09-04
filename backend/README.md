@@ -28,11 +28,11 @@ pytest
 ## Layout
 
 - `app/main.py` — FastAPI application entry point
-- `app/api/` — API routers (future)
+- `app/api/` — API routers (projects, retest)
 - `app/agents/` — deterministic failure diagnosis + optional local/private AI boundary (M7)
 - `app/code_intelligence/` — parsing and code understanding (future)
 - `app/execution/` — sandboxed test execution (M6)
 - `app/evaluation/` — coverage, mutation testing, benchmarks (future)
-- `app/models/` — data models/schemas, including failure diagnosis (M7) and test improvement (M8)
-- `app/services/` — business logic, including deterministic test improvement (M8)
-- `tests/` — pytest suite
+- `app/models/` — data models/schemas, including failure diagnosis (M7), test improvement (M8), and re-test verification (M9)
+- `app/services/` — business logic, including deterministic test improvement (M8) and re-test verification (M9)
+- `tests/` — pytest suite (375 tests)

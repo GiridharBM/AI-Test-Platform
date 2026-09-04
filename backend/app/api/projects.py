@@ -201,6 +201,27 @@ def improve_project(project_id: str):
     return result
 
 
+@router.post("/{project_id}/retest")
+def retest_project(project_id: str):
+    """Re-test M8-improved generated tests in the M6 Docker sandbox.
+
+    Verifies whether the M8 improvement changes fixed the diagnosed failures.
+    Requires an improvement result (run /improve first).
+    """
+    ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_improvement(config.WORKSPACE_DIR, project_id) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No improvement result. Run /improve first.",
+        )
+
+    from app.services.retest import retest_project as run_retest
+
+    result = run_retest(project_id)
+    return result
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -259,9 +280,14 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_improve:
         from app.models.improvement import ImprovementResult
         improvement = ImprovementResult.model_validate_json(raw_improve)
+    raw_retest = ingestion.read_retest(config.WORKSPACE_DIR, project_id)
+    retest = None
+    if raw_retest:
+        from app.models.retest import ReTestResult
+        retest = ReTestResult.model_validate_json(raw_retest)
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
         execution=execution, diagnosis=diagnosis,
-        improvement=improvement,
+        improvement=improvement, retest=retest,
     )

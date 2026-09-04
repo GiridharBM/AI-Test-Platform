@@ -60,14 +60,21 @@ Status legend:
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 8):
+Implemented components (Milestone 9):
 
 - **Deterministic test improvement** — consumes a `DiagnosisResult` plus the project's CodeMap, TestPlan, and generated tests; locates `NotImplementedError` scaffold placeholders and replaces them with evidence-based import-and-invoke bodies
 - **Placeholder regeneration** — a deterministic body (correct module import plus invocation with literals taken only from the M4 TestPlan's explicit edge-case evidence) written into the matching generated-test function; sibling edge-case helpers untouched
 - **No fabricated behavior** — never invents inputs (no `add(0, 0)`), never asserts a behavioral result, never suppresses failures; reports `blocked`/`no_change` with an explicit reason when evidence is insufficient (no plan-pinned input, unresolvable target, class/method instantiation, non-`NotImplementedError` categories)
 - **Sandboxed writes** — only under `workspace/{id}/generated_tests/`, `*.py` only, path-guarded, size-limited, atomic; `source/` and `.meta/` never written
 - **Improvement persistence** — structured results under `.meta/improvement.json`
-- **Improvement API** — POST /{id}/improve and improvement on GET /{id}; does not trigger a re-test loop (Re-test is the future M9 milestone; source code repair remains human-gated and out of scope)
+- **Improvement API** — POST /{id}/improve and improvement on GET /{id}; does not trigger a re-test loop (Re-test is implemented as M9; source code repair remains human-gated and out of scope)
+
+- **Deterministic re-test verification** — consumes M8 `ImprovementResult` (improved tests), M7 `DiagnosisResult`, and previous M6 `TestExecutionResult`; re-tests only `status == "improved"` tests in the M6 Docker sandbox
+- **M6 Docker sandbox reuse** — reuses the existing `execute_tests` runner; no second execution mechanism; M6 security model intact (`--network none`, `--read-only`, `--tmpfs /tmp:size=64m`, `--memory`, `--cpus`, `--rm`, source read-only copy, timeout, output limits)
+- **Baseline comparison** — correlates re-test file statuses against M6 prior execution and M7 diagnosed function failures; derives per-test verdicts: `fixed`, `still_failing`, `regression`, `passed`, `blocked`, `unavailable`
+- **No source repair** — never modifies original source code; writes only `.meta/retest.json`; no improvement loop, no autonomous repair, no AI inference
+- **Retest persistence** — structured results under `.meta/retest.json`
+- **Retest API** — POST /{id}/retest and retest on GET /{id}
 
 - **Deterministic failure diagnosis** — parses M6 execution output into structured findings (what failed, how it failed, category, severity)
 - **Failure classification** — deterministic categories: assertion, exception, import_error, timeout, collection_error, syntax_error, unknown
@@ -158,4 +165,4 @@ Milestone 6 (also implemented):
 
 ## Not Implemented
 
-No RAG, embeddings, vector database, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestones 7 and 8 add deterministic failure-diagnosis and deterministic generated-test-repair cores plus a thin, off-by-default local/private AI boundary (`llm.analyze`); they do **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. M8 deterministic improvement only regenerates the *generated tests'* scaffold bodies — it never modifies or repairs original source code (sandboxed code repair remains a human-gated future milestone). Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.
+No RAG, embeddings, vector database, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestones 7, 8, and 9 add deterministic failure-diagnosis, deterministic generated-test-improvement, and deterministic re-test-verification cores plus a thin, off-by-default local/private AI boundary (`llm.analyze`); they do **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. M8 deterministic improvement only regenerates the *generated tests'* scaffold bodies — it never modifies or repairs original source code (sandboxed code repair remains a human-gated future milestone). M9 re-test verification re-executes improved tests in the M6 Docker sandbox and compares against the M6/M7 baseline; it does **not** implement coverage analysis, mutation testing, CPU/GPU benchmarking, or any autonomous repair loop. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.

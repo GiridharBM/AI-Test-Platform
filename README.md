@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 8 — Deterministic Test Improvement**
+> **Milestone 9 — Re-test Verification**
 
-The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, produce deterministic test scaffolds, and execute them in an isolated Docker sandbox. It diagnoses test failures deterministically and now also **improves generated tests deterministically**: consuming a `DiagnosisResult`, it locates `NotImplementedError` scaffold placeholders in the generated tests and replaces them with evidence-based import-and-invoke bodies whose inputs come only from the TestPlan's explicit edge-case evidence — never fabricating inputs or behavioral assertions and only writing to the generated-tests workspace (original source and `.meta/` are never modified). Improvement results are reported as `ImprovementResult` and persisted to `.meta/improvement.json`. Sandboxed code repair remains a future, human-gated capability.
+The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, produce deterministic test scaffolds, and execute them in an isolated Docker sandbox. It diagnoses test failures deterministically, improves generated tests deterministically, and now also **verifies M8 improvements**: re-testing only improved tests in the M6 Docker sandbox and comparing against the M6/M7 baseline to derive per-test verdicts (fixed, still_failing, regression, passed). All stages are deterministic and private. No source code is modified. No AI inference is required.
 
 ## Long-Term Vision
 
@@ -22,7 +22,7 @@ Analyze → Plan → Generate → Execute → Diagnose → Improve → Re-test �
 4. **Execute** — sandboxed test runs in Docker containers
 5. **Diagnose** — AI-driven failure analysis and potential bug detection
 6. **Improve** — test regeneration and sandboxed code repair (human approval required before modifying the original project)
-7. **Re-test** — verify fixes and improved tests
+7. **Re-test** — verify M8 improvements fixed diagnosed failures (implemented)
 8. **Evaluate** — coverage analysis, mutation testing, and CPU/GPU benchmarking
 
 ## Planned Technology Areas
@@ -77,12 +77,13 @@ Open `http://localhost:8000` for the project-ingestion UI, or use the API direct
 | `/api/projects/{id}/execute` | POST | Execute tests in Docker sandbox |
 | `/api/projects/{id}/diagnose` | POST | Run deterministic failure diagnosis |
 | `/api/projects/{id}/improve` | POST | Improve failing generated tests deterministically |
-| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, generated tests, execution, diagnosis, and improvement results |
+| `/api/projects/{id}/retest` | POST | Re-test M8 improvements and compare against baseline |
+| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, generated tests, execution, diagnosis, improvement, and retest results |
 
 Run tests:
 
 ```bash
-pytest          # 319 tests — ingestion, profiling, discovery, planning, generation, execution, diagnosis, improvement, API, security
+pytest          # 375 tests — ingestion, profiling, discovery, planning, generation, execution, diagnosis, improvement, retest, API, security
 ```
 
 ## Milestone 7 — Hybrid Failure Diagnosis
@@ -100,4 +101,14 @@ pytest          # 319 tests — ingestion, profiling, discovery, planning, gener
 - **No fabricated behavior** — the improver never invents an input (no `add(0, 0)` from parameter names alone), never invents a behavioral assertion (`assert result == <value>`), never suppresses failures (`@skip`, `assert True`, catch-all `except`, empty bodies, deleting/weakening tests). When evidence is insufficient (no plan-pinned input, unresolvable target, class/method targets needing instantiation, non-`NotImplementedError` categories), the finding is reported `blocked`/`no_change` with an explicit reason.
 - **Deterministic & private** — stable finding/file/function ordering, no randomness, no external calls, no code execution, no import of user modules, no LLM/GPU/RAG infrastructure. A local/private AI flag (`IMPROVE_AI_ENABLED=False`) is declared but the deterministic core is fully self-contained and off by default.
 - **Sandboxed writes** — writes only under `workspace/{project_id}/generated_tests/` and only `*.py`, with traversal/absolute/drive/component guards. `source/`, `.meta/`, and original files are never written; writes are size-limited and atomic.
-- **Structured results** — `ImprovementResult` (`backend/app/models/improvement.py`) with per-finding `ImprovementChange` (status `improved`/`blocked`/`no_change`, reason, and file before/after), persisted to `.meta/improvement.json`. Overall status is `improved`/`partial`/`blocked`/`no_change`. Improvement does **not** trigger a re-test loop (Re-test is the future M9 milestone; original-source code repair remains human-gated and out of scope).
+- **Structured results** — `ImprovementResult` (`backend/app/models/improvement.py`) with per-finding `ImprovementChange` (status `improved`/`blocked`/`no_change`, reason, and file before/after), persisted to `.meta/improvement.json`. Overall status is `improved`/`partial`/`blocked`/`no_change`. Improvement does **not** trigger a re-test loop (Re-test is implemented as M9; original-source code repair remains human-gated and out of scope).
+
+## Milestone 9 — Re-test Verification
+
+- **Retest endpoint & core** — `POST /api/projects/{id}/retest` (and `backend/app/services/retest.py`). Consumes the M8 `ImprovementResult`, M7 `DiagnosisResult`, and previous M6 `TestExecutionResult`.
+- **Improved-test selection** — re-tests only tests where M8 produced `status == "improved"` changes; `no_change`/`blocked` M8 outcomes return a deterministic `no_op`.
+- **M6 Docker sandbox reuse** — executes the full `generated_tests/` directory via the existing `execute_tests` runner. No second execution mechanism. M6 sandbox security model intact.
+- **Baseline comparison** — correlates re-test file statuses against M6 baseline (prior execution) and M7 baseline (diagnosed function failures) to derive per-test verdicts: `fixed`, `still_failing`, `regression`, `passed`, `blocked`, `unavailable`.
+- **No source repair** — never modifies original source code. Writes only `.meta/retest.json`. No improvement loop, no autonomous repair, no AI inference.
+- **Deterministic & idempotent** — stable verdict ordering, no randomness, no external calls. Running twice against the same state yields identical logical results.
+- **Structured results** — `ReTestResult` (`backend/app/models/retest.py`) with per-test `ReTestComparison` (baseline_status, retest_status, verdict, reason), persisted to `.meta/retest.json`. Overall status: `fixed`/`still_failing`/`regression`/`passed`/`blocked`/`unavailable`/`no_op`.

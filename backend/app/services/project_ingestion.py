@@ -215,6 +215,22 @@ def read_improvement(workspace: Path, project_id: str) -> str | None:
     return impl_path.read_text(encoding="utf-8")
 
 
+def save_retest(workspace: Path, retest_json: str) -> None:
+    """Persist re-test results under .meta/retest.json."""
+    pid = json.loads(retest_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "retest.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(retest_json, encoding="utf-8")
+
+
+def read_retest(workspace: Path, project_id: str) -> str | None:
+    """Read persisted re-test results. Returns None if not found."""
+    retest_path = project_dir(workspace, project_id) / _META_DIR / "retest.json"
+    if not retest_path.is_file():
+        return None
+    return retest_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,
