@@ -222,6 +222,21 @@ def retest_project(project_id: str):
     return result
 
 
+@router.post("/{project_id}/evaluate")
+def evaluate_project(project_id: str):
+    """Evaluate the testing pipeline: coverage, mutation, and benchmark.
+
+    Runs three independent evaluation components over the project's source and
+    generated tests inside the M6 Docker sandbox and returns a single
+    EvaluationResult. Missing artifacts or unavailable components report
+    explicit blocked/unavailable component statuses rather than failing the
+    whole evaluation.
+    """
+    from app.evaluation.orchestrator import evaluate_project as run_evaluation
+
+    return run_evaluation(project_id)
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -285,9 +300,14 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_retest:
         from app.models.retest import ReTestResult
         retest = ReTestResult.model_validate_json(raw_retest)
+    raw_eval = ingestion.read_evaluation(config.WORKSPACE_DIR, project_id)
+    evaluation = None
+    if raw_eval:
+        from app.models.evaluation import EvaluationResult
+        evaluation = EvaluationResult.model_validate_json(raw_eval)
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
         execution=execution, diagnosis=diagnosis,
-        improvement=improvement, retest=retest,
+        improvement=improvement, retest=retest, evaluation=evaluation,
     )

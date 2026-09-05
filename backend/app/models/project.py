@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.models.codemap import CodeMap
 from app.models.diagnosis import DiagnosisResult
+from app.models.evaluation import EvaluationResult
 from app.models.execution import TestExecutionResult
 from app.models.improvement import ImprovementResult
 from app.models.retest import ReTestResult
@@ -131,6 +132,7 @@ class ProjectDetails(ProjectMeta):
     diagnosis: Optional[DiagnosisResult] = None  # populated after diagnose
     improvement: Optional[ImprovementResult] = None  # populated after improve
     retest: Optional[ReTestResult] = None  # populated after retest
+    evaluation: Optional[EvaluationResult] = None  # populated after evaluate
 
 
 class LocalPathRequest(BaseModel):

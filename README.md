@@ -4,9 +4,9 @@ A privacy-preserving, GPU-accelerated autonomous GenAI platform for automated so
 
 ## Current Status
 
-> **Milestone 9 — Re-test Verification**
+> **Milestone 10 — Evaluate**
 
-The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, produce deterministic test scaffolds, and execute them in an isolated Docker sandbox. It diagnoses test failures deterministically, improves generated tests deterministically, and now also **verifies M8 improvements**: re-testing only improved tests in the M6 Docker sandbox and comparing against the M6/M7 baseline to derive per-test verdicts (fixed, still_failing, regression, passed). All stages are deterministic and private. No source code is modified. No AI inference is required.
+The platform can ingest and profile projects, produce a structured code map, generate prioritised test plans, produce deterministic test scaffolds, and execute them in an isolated Docker sandbox. It diagnoses test failures deterministically, improves generated tests deterministically, and **verifies M8 improvements** via deterministic re-testing. It now also **evaluates the testing pipeline**: dynamic Python execution coverage, bounded mutation testing, and bounded CPU/GPU benchmarking, all run inside the M6 Docker sandbox. All stages are deterministic and private. No source code is modified. No AI inference is required. No M8/M9 loop, no source repair, no RAG, no autonomous agents.
 
 ## Long-Term Vision
 
@@ -23,7 +23,7 @@ Analyze → Plan → Generate → Execute → Diagnose → Improve → Re-test �
 5. **Diagnose** — AI-driven failure analysis and potential bug detection
 6. **Improve** — test regeneration and sandboxed code repair (human approval required before modifying the original project)
 7. **Re-test** — verify M8 improvements fixed diagnosed failures (implemented)
-8. **Evaluate** — coverage analysis, mutation testing, and CPU/GPU benchmarking
+8. **Evaluate** — coverage analysis, mutation testing, and CPU/GPU benchmarking (implemented)
 
 ## Planned Technology Areas
 
@@ -78,12 +78,13 @@ Open `http://localhost:8000` for the project-ingestion UI, or use the API direct
 | `/api/projects/{id}/diagnose` | POST | Run deterministic failure diagnosis |
 | `/api/projects/{id}/improve` | POST | Improve failing generated tests deterministically |
 | `/api/projects/{id}/retest` | POST | Re-test M8 improvements and compare against baseline |
-| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, generated tests, execution, diagnosis, improvement, and retest results |
+| `/api/projects/{id}/evaluate` | POST | Run coverage, mutation, and benchmark evaluation |
+| `/api/projects/{id}` | GET | Retrieve metadata, profile, code map, test plan, generated tests, execution, diagnosis, improvement, retest, and evaluation results |
 
 Run tests:
 
 ```bash
-pytest          # 375 tests — ingestion, profiling, discovery, planning, generation, execution, diagnosis, improvement, retest, API, security
+pytest          # 479 tests — ingestion, profiling, discovery, planning, generation, execution, diagnosis, improvement, retest, evaluation, API, security
 ```
 
 ## Milestone 7 — Hybrid Failure Diagnosis
@@ -112,3 +113,14 @@ pytest          # 375 tests — ingestion, profiling, discovery, planning, gener
 - **No source repair** — never modifies original source code. Writes only `.meta/retest.json`. No improvement loop, no autonomous repair, no AI inference.
 - **Deterministic & idempotent** — stable verdict ordering, no randomness, no external calls. Running twice against the same state yields identical logical results.
 - **Structured results** — `ReTestResult` (`backend/app/models/retest.py`) with per-test `ReTestComparison` (baseline_status, retest_status, verdict, reason), persisted to `.meta/retest.json`. Overall status: `fixed`/`still_failing`/`regression`/`passed`/`blocked`/`unavailable`/`no_op`.
+
+## Milestone 10 — Evaluate
+
+- **Evaluate endpoint & orchestrator** — `POST /api/projects/{id}/evaluate` (and `backend/app/evaluation/orchestrator.py`). Runs three independent evaluation components and packs them into a single `EvaluationResult`, persisted to `.meta/evaluation.json`.
+- **Coverage — dynamic Python execution coverage** — measures which source lines/branches are actually exercised by the generated tests inside the M6 Docker sandbox using the `coverage` package (installed in the sandbox image, not imported by the backend). This is a *runtime* measurement, entirely separate from the M3 static `CoverageSummary`. Reports per-file executable/covered lines, missing lines, line and branch percentages. Branch data is reported only when the tool produces it — never fabricated.
+- **Mutation — bounded Python mutation testing** — generates controlled AST-based source mutations (operator, comparison, boolean-literal, augmented-assign) on isolated temporary copies and runs the tests against each mutant in the sandbox. Classifies each mutant `killed`/`survived`/`timeout`/`error`. Mutation score = killed / (killed + survived), with the denominator documented. Strictly bounded by `EVALUATION_MAX_MUTANTS`, a per-mutant timeout, and an overall wall-clock budget. No mutated source is ever left behind and the original source tree is never modified.
+- **Benchmark — bounded CPU/GPU benchmarking** — measures the established current-platform workload (sandboxed test execution) over bounded warm-up + measured runs, reporting min/mean/median latency. GPU availability is probed honestly; when no GPU environment exists the GPU component is `unavailable` and no GPU numbers are fabricated. Benchmark values are inherently variable measurements, never used as logical IDs.
+- **M9 → M10 behavior** — evaluation proceeds normally whether M9 is `fixed`, `still_failing`, `regression`, or `passed`; `no_op`/`blocked` add explicit warnings; `unavailable` preserves unavailable execution-dependent components. A missing optional component never silently becomes success.
+- **Security & boundaries** — all executable project/test code runs in the M6 Docker sandbox (`--network none`, `--read-only`, tmpfs, memory/CPU limits, timeout, output cap, `--rm`, cleanup). No host execution, no source modification, no M8/M9 trigger, no mutation artifacts left behind. No LLM/RAG/vector/agent dependencies; no GPU model-inference libraries.
+- **Deterministic & idempotent** — static metrics (coverage calculations, mutation classification/score, result ordering) are deterministic. Reevaluating does not modify source, tests, or .meta beyond `.meta/evaluation.json`, and does not trigger M8/M9. Only inherently variable benchmark measurements may differ between runs.
+- **Structured results** — `EvaluationResult` (`backend/app/models/evaluation.py`) with component results (`CoverageResult`, `MutationResult`, `BenchmarkResult`), each with its own status (`completed`/`unavailable`/`blocked`/`error`/`not_run`), summary, warnings, and reasons.

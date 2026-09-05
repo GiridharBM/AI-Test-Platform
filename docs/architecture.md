@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 8)
+## Current Foundation (Implemented — Milestone 10)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -20,6 +20,8 @@ Status legend:
 │  POST /api/projects/{id}/execute              │
 │  POST /api/projects/{id}/diagnose             │
 │  POST /api/projects/{id}/improve              │
+│  POST /api/projects/{id}/retest               │
+│  POST /api/projects/{id}/evaluate             │
 │  GET  /api/projects/{id}                      │
 └─────────────────────┬────────────────────────┘
                       │ HTTP
@@ -36,6 +38,8 @@ Status legend:
 │    execution.py        Execution result schemas│
 │    diagnosis.py        Diagnosis schemas (M7) │
 │    improvement.py      Improvement schemas (M8)│
+│    retest.py           Re-test schemas (M9)   │
+│    evaluation.py       Evaluation schemas (M10)│
 │  app/services/                                 │
 │    project_ingestion.py  upload + path mgmt   │
 │    project_profiler.py   deterministic scan   │
@@ -47,20 +51,26 @@ Status legend:
 │    test_planner.py      plan generation       │
 │    test_generator.py    scaffold generation   │
 │    improvement.py       deterministic improve│
+│    retest.py            deterministic re-test│
 │  app/execution/                                 │
 │    runner.py            Docker sandbox runner  │
 │  app/agents/                                   │
 │    diagnose.py          deterministic diagnosis│
 │    llm.py               optional AI boundary   │
+│  app/evaluation/                                │
+│    sandbox.py           M6-security sandbox    │
+│    coverage.py          dynamic coverage (M10) │
+│    mutation.py          bounded mutation (M10) │
+│    benchmark.py         CPU/GPU bench (M10)    │
+│    orchestrator.py      evaluation orchestration│
 │  app/code_intelligence/  future               │
-│  app/evaluation/     future                   │
 │  workspace/          ingested project copies  │
 │ docker/                                        │
 │    Dockerfile.testrunner  test runner image    │
 └───────────────────────────────────────────────┘
 ```
 
-Implemented components (Milestone 9):
+Implemented components (Milestone 9 & 10):
 
 - **Deterministic test improvement** — consumes a `DiagnosisResult` plus the project's CodeMap, TestPlan, and generated tests; locates `NotImplementedError` scaffold placeholders and replaces them with evidence-based import-and-invoke bodies
 - **Placeholder regeneration** — a deterministic body (correct module import plus invocation with literals taken only from the M4 TestPlan's explicit edge-case evidence) written into the matching generated-test function; sibling edge-case helpers untouched
@@ -75,6 +85,15 @@ Implemented components (Milestone 9):
 - **No source repair** — never modifies original source code; writes only `.meta/retest.json`; no improvement loop, no autonomous repair, no AI inference
 - **Retest persistence** — structured results under `.meta/retest.json`
 - **Retest API** — POST /{id}/retest and retest on GET /{id}
+
+Milestone 10 (also implemented):
+
+- **Evaluation orchestrator** — consumes the M9 re-test context and the project's source + generated tests, runs three independent components, and packs them into a single `EvaluationResult` persisted under `.meta/evaluation.json`
+- **Dynamic Python execution coverage** — runtime measurement of which source lines/branches the generated tests actually exercise, measured with the established `coverage` package **inside the M6 Docker sandbox** (installed in the sandbox image only; the backend never imports it). Separate from the M3 static `CoverageSummary`. Reports per-file executable/covered lines, missing lines, and line/branch percentages; branch data reported only when the tool produces it (never fabricated)
+- **Bounded Python mutation testing** — AST-based operator/comparison/boolean/augmented-assign mutations applied to isolated temporary source copies, each executed against the tests in the sandbox, classified `killed`/`survived`/`timeout`/`error`; score = killed / (killed + survived), denominator documented; bounded by `EVALUATION_MAX_MUTANTS`, per-mutant timeout, and an overall wall-clock budget; mutated sources are always removed
+- **Bounded CPU/GPU benchmark** — times the sandboxed test-execution workload over bounded warm-up + measured runs, reporting min/mean/median; GPU availability probed honestly (unavailable when no GPU environment exists; no fabricated GPU numbers); measurements are variable by nature and never used as logical IDs
+- **M9 → M10 behavior** — evaluation proceeds for every M9 status; `no_op`/`blocked` add explicit warnings; `unavailable` preserves unavailable execution-dependent components; missing optional components never silently become success
+- **Security & idempotency** — all executable code runs under the M6 sandbox security model (`--network none`, `--read-only`, `--tmpfs`, `--memory`, `--cpus`, timeout, output caps, `--rm`, cleanup); no host execution, no source modification, no M8/M9 trigger, no leftover mutation artifacts; deterministic static metrics and stable result ordering
 
 - **Deterministic failure diagnosis** — parses M6 execution output into structured findings (what failed, how it failed, category, severity)
 - **Failure classification** — deterministic categories: assertion, exception, import_error, timeout, collection_error, syntax_error, unknown
@@ -156,13 +175,13 @@ Milestone 6 (also implemented):
 
 ## Future/Research
 
-- Mutation testing strategies
+- Advanced mutation strategies beyond the M10 bounded fixed operator set
 - Sandboxed bug detection and automated code repair (Improve milestone)
 - Human-in-the-loop approval workflow before modifying original projects
-- CPU/GPU benchmarking suite
+- Cloud / distributed benchmarking and broader hardware profiling beyond the bounded M10 CPU workload probe
 - GitHub repository integration
 - Multi-language support beyond Python (Java, JavaScript/TypeScript)
 
 ## Not Implemented
 
-No RAG, embeddings, vector database, AI-powered test generation, mutation testing, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestones 7, 8, and 9 add deterministic failure-diagnosis, deterministic generated-test-improvement, and deterministic re-test-verification cores plus a thin, off-by-default local/private AI boundary (`llm.analyze`); they do **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. M8 deterministic improvement only regenerates the *generated tests'* scaffold bodies — it never modifies or repairs original source code (sandboxed code repair remains a human-gated future milestone). M9 re-test verification re-executes improved tests in the M6 Docker sandbox and compares against the M6/M7 baseline; it does **not** implement coverage analysis, mutation testing, CPU/GPU benchmarking, or any autonomous repair loop. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.
+No RAG, embeddings, vector database, AI-powered test generation, GPU inference, code repair, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. Milestones 7, 8, and 9 add deterministic failure-diagnosis, deterministic generated-test-improvement, and deterministic re-test-verification cores plus a thin, off-by-default local/private AI boundary (`llm.analyze`); they do **not** implement LLM inference, model serving, or any external/cloud AI calls. Test scaffolding generation is deterministic and template-based; LLM-powered test body generation is not yet introduced. M8 deterministic improvement only regenerates the *generated tests'* scaffold bodies — it never modifies or repairs original source code (sandboxed code repair remains a human-gated future milestone). M9 re-test verification re-executes improved tests in the M6 Docker sandbox and compares against the M6/M7 baseline; it does **not** implement coverage analysis, mutation testing, CPU/GPU benchmarking, or any autonomous repair loop. M10 adds these as bounded, sandboxed evaluation components: dynamic Python execution coverage, bounded mutation testing, and bounded CPU/GPU benchmarking of the sandboxed test workload. M10 does **not** implement source repair, an M8/M9 loop, LLM inference, RAG, autonomous agents, or Java/JavaScript/TypeScript evaluation. Test execution is Docker-based sandboxed; native Python execution without Docker is not supported. These are introduced incrementally after each milestone is verified.

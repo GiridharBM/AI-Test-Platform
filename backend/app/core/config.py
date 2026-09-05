@@ -114,3 +114,34 @@ IMPROVE_AI_ENABLED = False                # local/private AI improvement is opt-
 IMPROVE_MAX_CHANGES = 100                 # cap on improvement changes per run
 IMPROVE_MAX_TEST_FILES = 1_000            # cap on generated test files improved
 IMPROVE_MAX_TEST_BYTES = 512 * 1024       # per improved file byte limit (512 KiB)
+
+# --- Evaluation limits (Milestone 10) ----------------------------------------
+# Each setting: name / purpose / safe default / bounds.
+# EVALUATION_MAX_MUTANTS: cap on total mutants generated+executed per evaluation.
+#   Purpose: mutation testing multiplies test execution; bound it hard.
+#   Bounds: >= 0. 0 disables mutation execution (returns no-op, not run).
+EVALUATION_MAX_MUTANTS = 20
+# MUTATION_TIMEOUT_SECONDS: per-mutant test execution timeout in the sandbox.
+#   Purpose: prevent one slow mutant from blocking the whole evaluation.
+#   Bounds: > 0.
+MUTATION_TIMEOUT_SECONDS = 30
+# EVALUATION_TOTAL_TIMEOUT_SECONDS: overall wall-clock budget for an evaluation.
+#   Purpose: resource protection for the total run across all components.
+#   Bounds: > 0.
+EVALUATION_TOTAL_TIMEOUT_SECONDS = 300
+# COVERAGE_TIMEOUT_SECONDS: per coverage measurement execution timeout.
+#   Purpose: bound coverage execution (reuses the execution-limit philosophy).
+#   Bounds: > 0.
+COVERAGE_TIMEOUT_SECONDS = 120
+# BENCHMARK_WARMUP_RUNS: warm-up runs excluded from recorded measurements.
+#   Purpose: allow the sandbox/runtime to stabilise before measurement.
+#   Bounds: >= 0.
+BENCHMARK_WARMUP_RUNS = 2
+# BENCHMARK_MEASURED_RUNS: measured runs used for min/mean/median.
+#   Purpose: keep benchmarking bounded and produce interpretable stats.
+#   Bounds: >= 1.
+BENCHMARK_MEASURED_RUNS = 5
+# BENCHMARK_TIMEOUT_SECONDS: per benchmark run execution timeout.
+#   Purpose: prevent a benchmark measuring an unbounded workload.
+#   Bounds: > 0.
+BENCHMARK_TIMEOUT_SECONDS = 120

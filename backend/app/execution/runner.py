@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.core import config
@@ -66,6 +67,151 @@ def _ensure_image(image: str) -> None:
         raise DockerUnavailable(
             f"Docker build failed: {build.stderr.decode(errors='replace')}"
         )
+
+
+@dataclass
+class SandboxCommandResult:
+    """Outcome of one sandboxed command run."""
+
+    returncode: int
+    stdout: str
+    stderr: str
+    duration_seconds: float
+    timed_out: bool
+
+
+def _docker_run(
+    container_name: str,
+    test_path: str,
+    source_path: str | None,
+    entrypoint: str | None,
+    command: list[str],
+    timeout: int,
+    memory_limit: str,
+    cpu_limit: float,
+    image: str,
+) -> tuple[int, str, str, float, bool]:
+    """Run a command through the shared sandboxed Docker execution path.
+
+    Returns (returncode, stdout, stderr, duration_seconds, timed_out).
+
+    This is the single place that builds a ``docker run`` argv, so M6
+    (execute_tests) and every M10 evaluation component execute untrusted code
+    under exactly the same isolation: no network, bounded memory/CPU/timeout,
+    read-only root with a small tmpfs /tmp, read-only test/source mounts, and
+    ``--rm`` cleanup.
+    """
+    exec_args = [
+        "docker", "run",
+        "--rm",
+        "--name", container_name,
+        "--network", "none",
+        "--memory", memory_limit,
+        "--cpus", str(cpu_limit),
+        "--read-only",
+        "--tmpfs", "/tmp:size=64m",
+        "-v", f"{test_path}:/tests:ro",
+        "-w", "/tests",
+    ]
+    if source_path:
+        exec_args += [
+            "-v", f"{source_path}:/source:ro",
+            "-e", "PYTHONPATH=/source",
+        ]
+    if entrypoint:
+        exec_args += ["--entrypoint", entrypoint]
+    exec_args += [image, *command]
+
+    start = time.monotonic()
+    try:
+        result = subprocess.run(
+            exec_args,
+            capture_output=True,
+            timeout=timeout + 10,  # extra buffer for Docker overhead
+        )
+        duration = round(time.monotonic() - start, 3)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        duration = round(time.monotonic() - start, 3)
+        timed_out = True
+        # Best-effort container cleanup — ignore kill failures
+        try:
+            subprocess.run(
+                ["docker", "kill", container_name],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            pass
+        result = subprocess.CompletedProcess(args=[], returncode=-1, stdout=b"", stderr=b"")
+
+    stdout = result.stdout.decode(errors="replace")[:config.EXECUTION_MAX_OUTPUT_BYTES]
+    stderr = result.stderr.decode(errors="replace")[:config.EXECUTION_MAX_OUTPUT_BYTES]
+    return result.returncode, stdout, stderr, duration, timed_out
+
+
+def run_sandboxed_command(
+    project_id: str,
+    source_root: Path,
+    test_dir: Path,
+    entrypoint: list[str],
+    args: list[str],
+    timeout: int | None = None,
+    memory_limit: str | None = None,
+    cpu_limit: float | None = None,
+    image: str | None = None,
+) -> SandboxCommandResult:
+    """Run a caller-supplied command inside the shared M6-security sandbox.
+
+    `source_root` is mounted read-only at /source (PYTHONPATH=/source) and
+    `test_dir` is mounted read-only at /tests. The caller supplies the container
+    entrypoint and arguments; coverage, mutation, and benchmark all execute
+    through this single path rather than re-implementing Docker lifecycle.
+
+    Raises DockerUnavailable when Docker is unavailable or the image cannot be
+    built.
+    """
+    timeout = timeout or config.EXECUTION_TIMEOUT_SECONDS
+    memory_limit = memory_limit or f"{config.EXECUTION_MEMORY_LIMIT_MB}m"
+    cpu_limit = cpu_limit if cpu_limit is not None else config.EXECUTION_CPU_LIMIT
+    image = image or config.EXECUTION_IMAGE_NAME
+
+    if not _docker_available():
+        raise DockerUnavailable("Docker is not available. Install and start Docker to evaluate.")
+    try:
+        _ensure_image(image)
+    except DockerUnavailable:
+        raise
+    except Exception as exc:  # defensive: never crash evaluation on infra
+        raise DockerUnavailable(str(exc)) from exc
+
+    if not test_dir.is_dir():
+        raise DockerUnavailable("Test directory does not exist for measurement.")
+
+    work_dir = Path(tempfile.mkdtemp(prefix="eval_"))
+    try:
+        test_dest = work_dir / "tests"
+        shutil.copytree(test_dir, test_dest)
+
+        source_dest = work_dir / "source"
+        have_source = source_root is not None and source_root.is_dir()
+        if have_source:
+            shutil.copytree(source_root, source_dest, symlinks=False)
+
+        returncode, stdout, stderr, duration, timed_out = _docker_run(
+            container_name=f"eval_{project_id}",
+            test_path=str(test_dest.resolve()),
+            source_path=str(source_dest.resolve()) if have_source else None,
+            entrypoint=entrypoint[0],
+            command=[*entrypoint[1:], *args],
+            timeout=timeout,
+            memory_limit=memory_limit,
+            cpu_limit=cpu_limit,
+            image=image,
+        )
+        return SandboxCommandResult(returncode, stdout, stderr, duration, timed_out)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def _parse_pytest_output(stdout: str) -> tuple[int, int, int, int, int]:
@@ -182,53 +328,17 @@ def execute_tests(
         if have_source:
             shutil.copytree(source_root, source_dest, symlinks=False)
 
-        container_name = f"exec_{project_id}"
-        abs_tests = str(test_dest.resolve())
-        exec_args = [
-            "docker", "run",
-            "--rm",
-            "--name", container_name,
-            "--network", "none",
-            "--memory", memory_limit,
-            "--cpus", str(cpu_limit),
-            "--read-only",
-            "--tmpfs", "/tmp:size=64m",
-            "-v", f"{abs_tests}:/tests:ro",
-            "-w", "/tests",
-        ]
-        if have_source:
-            abs_source = str(source_dest.resolve())
-            exec_args += [
-                "-v", f"{abs_source}:/source:ro",
-                "-e", "PYTHONPATH=/source",
-            ]
-        exec_args += [image, "-v", "--tb=short", "--no-header", "-q"]
-
-        start = time.monotonic()
-        try:
-            result = subprocess.run(
-                exec_args,
-                capture_output=True,
-                timeout=timeout + 10,  # extra buffer for Docker overhead
-            )
-            duration = round(time.monotonic() - start, 3)
-            timed_out = False
-        except subprocess.TimeoutExpired:
-            duration = round(time.monotonic() - start, 3)
-            timed_out = True
-            # Best-effort container cleanup — ignore kill failures
-            try:
-                subprocess.run(
-                    ["docker", "kill", container_name],
-                    capture_output=True,
-                    timeout=10,
-                )
-            except Exception:
-                pass
-            result = subprocess.CompletedProcess(args=[], returncode=-1, stdout=b"", stderr=b"")
-
-        stdout = result.stdout.decode(errors="replace")[:config.EXECUTION_MAX_OUTPUT_BYTES]
-        stderr = result.stderr.decode(errors="replace")[:config.EXECUTION_MAX_OUTPUT_BYTES]
+        returncode, stdout, stderr, duration, timed_out = _docker_run(
+            container_name=f"exec_{project_id}",
+            test_path=str(test_dest.resolve()),
+            source_path=str(source_dest.resolve()) if have_source else None,
+            entrypoint=None,
+            command=["-v", "--tb=short", "--no-header", "-q"],
+            timeout=timeout,
+            memory_limit=memory_limit,
+            cpu_limit=cpu_limit,
+            image=image,
+        )
 
         if timed_out:
             return TestExecutionResult(
@@ -251,9 +361,9 @@ def execute_tests(
                 status=file_statuses[fpath],
             ))
 
-        if result.returncode == 0:
+        if returncode == 0:
             overall = STATUS_PASSED
-        elif result.returncode == 5:
+        elif returncode == 5:
             overall = STATUS_PASSED  # pytest exit 5 = no tests collected
         else:
             overall = STATUS_FAILED if failed > 0 else STATUS_ERROR
@@ -270,7 +380,7 @@ def execute_tests(
         return TestExecutionResult(
             project_id=project_id,
             overall_status=overall,
-            exit_code=result.returncode,
+            exit_code=returncode,
             stdout=stdout,
             stderr=stderr,
             duration_seconds=duration,

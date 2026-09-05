@@ -231,6 +231,22 @@ def read_retest(workspace: Path, project_id: str) -> str | None:
     return retest_path.read_text(encoding="utf-8")
 
 
+def save_evaluation(workspace: Path, evaluation_json: str) -> None:
+    """Persist evaluation results under .meta/evaluation.json."""
+    pid = json.loads(evaluation_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "evaluation.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(evaluation_json, encoding="utf-8")
+
+
+def read_evaluation(workspace: Path, project_id: str) -> str | None:
+    """Read persisted evaluation results. Returns None if not found."""
+    eval_path = project_dir(workspace, project_id) / _META_DIR / "evaluation.json"
+    if not eval_path.is_file():
+        return None
+    return eval_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,
