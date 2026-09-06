@@ -115,6 +115,25 @@ class TestExtraction:
         out = "/tests/test_z.py::t FAILED\n"
         assert d.extract_failed_tests(out) == [("test_z.py", "t", "failed")]
 
+    def test_real_pytest_progress_column(self):
+        """Real pytest 9.1.1 non-TTY output appends '[ n%]' per status line;
+        FAILED entries must still extract with correct file/function/status and
+        PASSED must never be returned as a failure."""
+        out = (
+            "test_calculator.py::test_add_basic FAILED [ 11%]\n"
+            "test_calculator.py::test_divide_basic FAILED [ 55%]\n"
+            "test_calculator.py::test_is_even_basic PASSED [100%]\n"
+        )
+        got = d.extract_failed_tests(out)
+        assert got == [
+            ("test_calculator.py", "test_add_basic", "failed"),
+            ("test_calculator.py", "test_divide_basic", "failed"),
+        ]
+
+    def test_progress_column_with_container_prefix(self):
+        out = "/tests/test_z.py::t FAILED [100%]\n"
+        assert d.extract_failed_tests(out) == [("test_z.py", "t", "failed")]
+
 
 # ── Classification ──────────────────────────────────────────────────────
 
@@ -242,6 +261,37 @@ class TestDiagnoseExecution:
     def test_no_execution_unavailable(self):
         r = d.diagnose_execution(_mk_exec(status="unavailable"))
         assert r.overall_status == "no_execution"
+
+    def test_real_pytest_progress_columns_diagnose_failures(self):
+        """Real 9.1.1 non-TTY stdout (progress suffixes on every -v line) must
+        drive diagnosis; the suffix must not collapse results to no_failures."""
+        out = (
+            "test_calculator.py::test_add_basic FAILED [ 11%]\n"
+            "test_calculator.py::test_divide_basic FAILED [ 55%]\n"
+            "test_calculator.py::test_is_even_basic PASSED [100%]\n"
+            "\n"
+            "============================= FAILURES =============================\n"
+            "________________________________ test_add_basic ________________________________\n"
+            "test_calculator.py:5: in test_add_basic\n"
+            "    raise NotImplementedError('basic')\n"
+            "E   NotImplementedError: basic\n"
+            "________________________________ test_divide_basic ________________________________\n"
+            "test_calculator.py:9: in test_divide_basic\n"
+            "    raise NotImplementedError('divide')\n"
+            "E   NotImplementedError: divide\n"
+        )
+        r = d.diagnose_execution(_mk_exec(status="failed", exit_code=1, stdout=out))
+        assert r.overall_status == "failures_diagnosed"
+        assert len(r.findings) == 2
+        funcs = {f.test_function: f for f in r.findings}
+        assert set(funcs) == {"test_add_basic", "test_divide_basic"}
+        for f in r.findings:
+            assert f.status == "failed"
+            assert f.category == "exception"
+            assert f.exception_type == "NotImplementedError"
+            assert f.test_file == "test_calculator.py"
+        assert funcs["test_add_basic"].message == "basic"
+        assert funcs["test_divide_basic"].message == "divide"
 
     def test_exception_finding(self):
         r = d.diagnose_execution(_mk_exec(stdout=_CONTAINER_NOT_IMPLEMENTED))

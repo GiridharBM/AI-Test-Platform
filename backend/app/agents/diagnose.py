@@ -48,9 +48,12 @@ from app.models.execution import (
     TestExecutionResult,
 )
 
-# pytest -v result line: <file>::<func> PASSED|FAILED|ERROR (also SKIPPED/XFAIL)
+# pytest -v result line: <file>::<func> PASSED|FAILED|ERROR (also SKIPPED/XFAIL),
+# optionally followed by pytest's trailing progress column ("[ 11%]") in
+# non-TTY/Docker output. The status token is still required.
 _TEST_RESULT_RE = re.compile(
-    r"^(?P<file>.+)::(?P<func>[^\s]+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED)\s*$"
+    r"^(?P<file>.+)::(?P<func>[^\s]+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED)"
+    r"\s*(?:\[\s*\d+%\]\s*)?$"
 )
 # Traceback section header from --tb=short: <6+ underscores> <id> <6+ underscores>
 _SECTION_HEADER_RE = re.compile(r"^_{6,}\s*(?P<id>.+?)\s*_{6,}$")
