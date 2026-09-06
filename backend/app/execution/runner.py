@@ -7,6 +7,7 @@ Runs pytest inside an isolated Docker container with:
 - Automatic container cleanup
 """
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -29,6 +30,12 @@ from app.models.execution import (
 
 class DockerUnavailable(Exception):
     """Raised when Docker is not accessible."""
+
+
+# Pytest -v emits each status line with a trailing progress column, e.g.
+# "tests/test_a.py::test_b FAILED [ 66%]". Strip it so the parsers match the
+# per-test status keyword that is the parser contract.
+_PROGRESS_RE = re.compile(r"\s+\[\s*\d+%\]\s*$")
 
 
 def _docker_available() -> bool:
@@ -222,6 +229,7 @@ def _parse_pytest_output(stdout: str) -> tuple[int, int, int, int, int]:
     passed = failed = errors = skipped = 0
     # Match lines like: tests/test_foo.py::test_bar PASSED
     for line in stdout.splitlines():
+        line = _PROGRESS_RE.sub("", line.rstrip()).rstrip()
         line = line.rstrip()
         if line.endswith(" PASSED"):
             passed += 1
@@ -238,6 +246,7 @@ def _parse_file_results(stdout: str) -> dict[str, str]:
     """Parse pytest -v output into file → overall status mapping."""
     files: dict[str, str] = {}
     for line in stdout.splitlines():
+        line = _PROGRESS_RE.sub("", line.rstrip()).rstrip()
         line = line.rstrip()
         if "::" not in line:
             continue
@@ -333,7 +342,7 @@ def execute_tests(
             test_path=str(test_dest.resolve()),
             source_path=str(source_dest.resolve()) if have_source else None,
             entrypoint=None,
-            command=["-v", "--tb=short", "--no-header", "-q"],
+            command=["-v", "--tb=short", "--no-header"],
             timeout=timeout,
             memory_limit=memory_limit,
             cpu_limit=cpu_limit,

@@ -151,6 +151,20 @@ class TestParsePytestOutput:
         assert s == 1
         assert t == 1
 
+    def test_real_pytest_progress_column(self):
+        """Real -v output appends ' [ n%]' to each status line; counts must survive."""
+        stdout = (
+            "tests/test_calculator.py::test_add PASSED [ 33%]\n"
+            "tests/test_calculator.py::test_divide FAILED [ 66%]\n"
+            "tests/test_calculator.py::test_even FAILED [100%]\n"
+            "1 passed, 2 failed in 0.4s\n"
+        )
+        p, f, e, s, t = _parse_pytest_output(stdout)
+        assert p == 1
+        assert f == 2
+        assert e == 0
+        assert t == 3
+
 
 class TestParseFileResults:
     def test_single_file_all_pass(self):
@@ -181,6 +195,15 @@ class TestParseFileResults:
 
     def test_empty(self):
         assert _parse_file_results("") == {}
+
+    def test_real_pytest_progress_column(self):
+        stdout = (
+            "tests/test_calculator.py::test_add PASSED [ 33%]\n"
+            "tests/test_calculator.py::test_divide FAILED [ 66%]\n"
+            "tests/test_calculator.py::test_even FAILED [100%]\n"
+        )
+        files = _parse_file_results(stdout)
+        assert files["tests/test_calculator.py"] == "failed"
 
 
 # ── Runner tests (Docker mocked) ─────────────────────────────────────
@@ -318,6 +341,37 @@ class TestExecuteTestsSuccess:
         assert "timed out" in result.warnings[0]
 
 
+class TestExecuteTestsPytestFlags:
+    """Regression: execute_tests must invoke pytest in verbose mode WITHOUT -q.
+
+    ``-q`` cancels ``-v`` in pytest (verbosity 0), which suppresses the per-test
+    ``PASSED``/``FAILED`` status lines that ``_parse_pytest_output`` and
+    ``_parse_file_results`` rely on. If that flag ever returns, structured
+    counts collapse to zero and M7 mis-reports ``no_failures``.
+    """
+
+    def _docker_run_cmd(self, mock_run, tmp_path):
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        mock_run.return_value = MagicMock(returncode=0, stdout=b"", stderr=b"")
+        execute_tests(test_dir, "proj")
+        return next(
+            call for call in mock_run.call_args_list
+            if call.args and call.args[0] and call.args[0][:2] == ["docker", "run"]
+        ).args[0]
+
+    @patch("app.execution.runner._docker_available", return_value=True)
+    @patch("app.execution.runner._ensure_image")
+    @patch("app.execution.runner.subprocess.run")
+    def test_pytest_invoked_verbose_without_q(self, mock_run, _mock_img, _mock_docker, tmp_path):
+        cmd = self._docker_run_cmd(mock_run, tmp_path)
+        pytest_args = cmd[cmd.index(config.EXECUTION_IMAGE_NAME) + 1:]
+        assert "-v" in pytest_args
+        assert "-q" not in pytest_args
+        assert "--tb=short" in pytest_args
+        assert "--no-header" in pytest_args
+
+
 class TestExecuteTestsFileResults:
     @patch("app.execution.runner._docker_available", return_value=True)
     @patch("app.execution.runner._ensure_image")
@@ -340,6 +394,33 @@ class TestExecuteTestsFileResults:
         by_path = {fr.file_path: fr.status for fr in result.file_results}
         assert by_path["tests/test_a.py"] == "passed"
         assert by_path["tests/test_b.py"] == "failed"
+
+    @patch("app.execution.runner._docker_available", return_value=True)
+    @patch("app.execution.runner._ensure_image")
+    @patch("app.execution.runner.subprocess.run")
+    def test_calculator_verbose_output_end_to_end(self, mock_run, _mock_img, _mock_docker, tmp_path):
+        """Real pytest -v output (one passed, two failed) must produce
+        non-zero structured counts and correct per-file statuses."""
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_calculator.py").write_text("# calculator")
+
+        stdout = (
+            "tests/test_calculator.py::test_add PASSED [ 33%]\n"
+            "tests/test_calculator.py::test_divide FAILED [ 66%]\n"
+            "tests/test_calculator.py::test_even FAILED [100%]\n"
+            "1 passed, 2 failed in 0.4s\n"
+        )
+        mock_run.return_value = MagicMock(returncode=1, stdout=stdout.encode(), stderr=b"")
+        result = execute_tests(test_dir, "proj123")
+        assert result.summary.total_test_functions > 0
+        assert result.summary.failed == 2
+        assert result.summary.passed == 1
+        assert len(result.file_results) > 0
+        by_path = {fr.file_path: fr.status for fr in result.file_results}
+        assert by_path["tests/test_calculator.py"] == "failed"
+        assert result.overall_status == STATUS_FAILED
+        assert result.exit_code == 1
 
 
 # ── Security tests ───────────────────────────────────────────────────
