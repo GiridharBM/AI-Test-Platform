@@ -1,5 +1,6 @@
 """Tests for the deterministic test-improvement core (Milestone 8)."""
 
+import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -581,3 +582,182 @@ class TestAuditRemediation:
         name, fn_res = _resolve_target("test_add", codemap, idx)
         assert name == "pkg_a.add"
         assert fn_res is fn_a
+
+
+# ── M8 live integration fix: generated-test naming grammar ────────────
+
+class TestResolverGeneratedTestGrammar:
+    """F5: M8 `_resolve_target` must understand the frozen M5/M4 naming grammar:
+    test_<target>, test_<target>_basic, test_<target>_usage, test_<target>_edge_<suffix>."""
+
+    def _calculator_codemap(self):
+        fns = [
+            SourceFunction(name="add", qualified_name="add", file_path="calculator.py",
+                           line_start=1, line_end=3, args=["a", "b"]),
+            SourceFunction(name="divide", qualified_name="divide", file_path="calculator.py",
+                           line_start=4, line_end=6, args=["a", "b"]),
+            SourceFunction(name="is_even", qualified_name="is_even", file_path="calculator.py",
+                           line_start=7, line_end=9, args=["number"]),
+        ]
+        mod = SourceModule(path="calculator.py", language="python", functions=fns, classes=[])
+        return _mk_codemap(source_modules=[mod], test_mappings=[])
+
+    @pytest.mark.parametrize("test_name,expected_target", [
+        ("test_add", "add"),
+        ("test_add_basic", "add"),
+        ("test_add_usage", "add"),
+        ("test_add_edge_a_none", "add"),
+        ("test_divide_basic", "divide"),
+        ("test_divide_edge_b_none", "divide"),
+        ("test_is_even_basic", "is_even"),
+        ("test_is_even_edge_number_negative", "is_even"),
+    ])
+    def test_grammar_forms_resolve_to_correct_function(self, test_name, expected_target):
+        from app.services.improvement import _resolve_target, _source_index
+        codemap = self._calculator_codemap()
+        name, fn_res = _resolve_target(test_name, codemap, _source_index(codemap))
+        assert name == expected_target
+        assert fn_res is not None
+        assert fn_res.name == expected_target
+
+    def test_basic_form_ambiguous_across_modules_blocked(self):
+        """test_add_basic with no explicit mapping and two `add` modules MUST
+        stay unresolved (never silently choose a module)."""
+        from app.services.improvement import _resolve_target, _source_index
+        fn_a = SourceFunction(name="add", qualified_name="pkg_a.add",
+                              file_path="pkg_a/__init__.py", line_start=1, line_end=3,
+                              args=["a", "b"])
+        fn_b = SourceFunction(name="add", qualified_name="pkg_b.add",
+                              file_path="pkg_b/__init__.py", line_start=1, line_end=3,
+                              args=["a", "b"])
+        codemap = _mk_codemap(
+            source_modules=[
+                SourceModule(path="pkg_a/__init__.py", language="python",
+                             functions=[fn_a], classes=[]),
+                SourceModule(path="pkg_b/__init__.py", language="python",
+                             functions=[fn_b], classes=[]),
+            ],
+            test_mappings=[],
+        )
+        name, fn_res = _resolve_target("test_add_basic", codemap, _source_index(codemap))
+        assert name is None and fn_res is None
+
+    def test_explicit_mapping_authoritative_for_basic_form(self):
+        """An explicit test_add_basic -> real_add mapping must win OVER the
+        grammar fallback (which alone would resolve to `add`)."""
+        from app.services.improvement import _resolve_target, _source_index
+        fn_add = SourceFunction(name="add", qualified_name="add", file_path="app.py",
+                                line_start=1, line_end=3, args=["a", "b"])
+        fn_real = SourceFunction(name="real_add", qualified_name="real_add", file_path="app.py",
+                                 line_start=4, line_end=6, args=["a", "b"])
+        codemap = _mk_codemap(
+            source_modules=[SourceModule(path="app.py", language="python",
+                                         functions=[fn_add, fn_real], classes=[])],
+            test_mappings=[TestMapping(
+                test_function="test_add_basic", test_file="test_app.py",
+                source_target="real_add", source_file="app.py",
+                confidence=0.9, method="import_analysis",
+            )],
+        )
+        name, fn_res = _resolve_target("test_add_basic", codemap, _source_index(codemap))
+        assert name == "real_add"
+        assert fn_res is fn_real
+
+
+class TestLiveShapedImprove:
+    """F5 integration: a real M3/M5/M7-shaped calculator diagnosis must no
+    longer block solely because generated tests use the `_basic` / `_edge_`
+    naming contract."""
+
+    def _calculator_codemap(self):
+        fns = [
+            SourceFunction(name="add", qualified_name="add", file_path="calculator.py",
+                           line_start=1, line_end=3, args=["a", "b"]),
+            SourceFunction(name="divide", qualified_name="divide", file_path="calculator.py",
+                           line_start=4, line_end=6, args=["a", "b"]),
+            SourceFunction(name="is_even", qualified_name="is_even", file_path="calculator.py",
+                           line_start=7, line_end=9, args=["number"]),
+        ]
+        mod = SourceModule(path="calculator.py", language="python", functions=fns, classes=[])
+        return _mk_codemap(source_modules=[mod], test_mappings=[])
+
+    def _plan_with_none_evidence(self):
+        from app.models.test_plan import EdgeCase, TestPlan, TestPlanSummary, TestSpec
+        specs = []
+        for target, args in (("add", ("a", "b")), ("divide", ("a", "b")), ("is_even", ("number",))):
+            specs.append(TestSpec(
+                target_qualified_name=target, target_file="calculator.py", target_type="function",
+                priority=1, test_type="unit", suggested_test_name=f"test_{target}_basic",
+                preconditions=[],
+                edge_cases=[EdgeCase(parameter=a, case_type="none", description="None value")
+                            for a in args],
+                risk_score=0.5,
+            ))
+        return TestPlan(
+            project_id="p1", created_at=_CREATED,
+            specs=specs,
+            summary=TestPlanSummary(total_specs=3, critical_count=3, high_count=0,
+                                    medium_count=0, low_count=0),
+        )
+
+    def _scaffold(self):
+        return (
+            '"""Tests for calculator (auto-generated scaffold)."""\n'
+            "\n"
+            "def test_add_basic():\n"
+            '    """Test add."""\n'
+            '    raise NotImplementedError("Scaffold generated by AI Test Platform")\n'
+            "\n"
+            "def test_divide_basic():\n"
+            '    """Test divide."""\n'
+            '    raise NotImplementedError("Scaffold generated by AI Test Platform")\n'
+            "\n"
+            "def test_is_even_basic():\n"
+            '    """Test is_even."""\n'
+            '    raise NotImplementedError("Scaffold generated by AI Test Platform")\n'
+            "\n"
+            "def test_add_edge_a_none():\n"
+            '    """Edge case: missing value."""\n'
+            '    raise NotImplementedError("Edge case: missing value")\n'
+            "\n"
+            "def test_is_even_edge_number_negative():\n"
+            '    """Edge case: negative number."""\n'
+            '    raise NotImplementedError("Edge case: negative number")\n'
+            "\n"
+        )
+
+    def _findings(self):
+        return [
+            DiagnosisFinding(
+                finding_id=f"f{i}", test_file="test_calculator.py", test_function=name,
+                status="failed", failure_signature="sig",
+                exception_type="NotImplementedError", category="exception",
+            )
+            for i, name in enumerate(["test_add_basic", "test_divide_basic", "test_is_even_basic"])
+        ]
+
+    def test_live_shaped_calculator_improves(self, tmp_path):
+        gt = tmp_path / "p1" / "generated_tests"
+        gt.mkdir(parents=True)
+        (gt / "test_calculator.py").write_text(self._scaffold(), encoding="utf-8")
+        result = improve_diagnosis(
+            _diagnosis(self._findings()), self._calculator_codemap(), tmp_path, "p1",
+            test_plan=self._plan_with_none_evidence(),
+        )
+        assert result.status == "improved"
+        assert result.files_modified == 1
+        assert len(result.changes) == 3
+        assert all(c.status == "improved" for c in result.changes)
+        on_disk = (gt / "test_calculator.py").read_text(encoding="utf-8")
+        assert "from calculator import add" in on_disk
+        assert "from calculator import divide" in on_disk
+        assert "from calculator import is_even" in on_disk
+        assert "add(None, None)" in on_disk
+        assert "divide(None, None)" in on_disk
+        assert "is_even(None)" in on_disk
+        # no fabricated behavioral assertion anywhere
+        assert "assert " + "result" not in on_disk
+        assert "assert add(" not in on_disk
+        # edge-case helpers remain untouched scaffolds
+        assert "test_add_edge_a_none" in on_disk
+        assert "Edge case: missing value" in on_disk

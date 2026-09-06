@@ -133,6 +133,32 @@ def _unique_top_level_by_name(codemap, name: str) -> SourceFunction | None:
     return None
 
 
+def _candidate_target_keys(test_function: str) -> list[str]:
+    """Deterministic generated-test naming grammar candidates (most specific first).
+
+    Frozen M5/M4 naming contract:
+        test_<target>              (legacy/direct)
+        test_<target>_basic        (M4 unit suggested name, as executed in the live project)
+        test_<target>_usage        (documented legacy form)
+        test_<target>_edge_<suffix>(M5 edge-case helpers)
+
+    This is an explicit grammar, not arbitrary prefix matching: each candidate
+    is derived from a known suffix; `_unique_top_level_by_name` then enforces
+    the exactly-one top-level match rule (ambiguity stays blocked).
+    """
+    if not test_function.startswith("test_"):
+        return []
+    body = test_function[len("test_"):]
+    keys: list[str] = []
+    if "_edge_" in body:
+        keys.append(body.split("_edge_", 1)[0])
+    for suffix in ("_basic", "_usage"):
+        if body.endswith(suffix):
+            keys.append(body[: -len(suffix)])
+    keys.append(body)
+    return keys
+
+
 def _resolve_target(
     test_function: str,
     codemap,
@@ -153,8 +179,7 @@ def _resolve_target(
                 tgt = idx.get(m.source_target)
                 if tgt is not None and _is_top_level_function(codemap, m.source_target):
                     return m.source_target, tgt
-    if test_function.startswith("test_"):
-        key = test_function[len("test_"):]
+    for key in _candidate_target_keys(test_function):
         fn = _unique_top_level_by_name(codemap, key)
         if fn is not None and isinstance(fn, SourceFunction):
             return fn.qualified_name, fn
