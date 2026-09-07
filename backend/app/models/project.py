@@ -10,6 +10,7 @@ from app.models.diagnosis import DiagnosisResult
 from app.models.evaluation import EvaluationResult
 from app.models.execution import TestExecutionResult
 from app.models.improvement import ImprovementResult
+from app.models.repair import RepairResult
 from app.models.retest import ReTestResult
 from app.models.test_generation import TestGenerationResult
 from app.models.test_plan import TestPlan
@@ -133,6 +134,7 @@ class ProjectDetails(ProjectMeta):
     improvement: Optional[ImprovementResult] = None  # populated after improve
     retest: Optional[ReTestResult] = None  # populated after retest
     evaluation: Optional[EvaluationResult] = None  # populated after evaluate
+    repair: Optional[RepairResult] = None  # populated after repair
 
 
 class LocalPathRequest(BaseModel):

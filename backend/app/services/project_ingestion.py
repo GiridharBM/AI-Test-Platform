@@ -247,6 +247,22 @@ def read_evaluation(workspace: Path, project_id: str) -> str | None:
     return eval_path.read_text(encoding="utf-8")
 
 
+def save_repair(workspace: Path, repair_json: str) -> None:
+    """Persist source-repair results under .meta/repair.json."""
+    pid = json.loads(repair_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "repair.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(repair_json, encoding="utf-8")
+
+
+def read_repair(workspace: Path, project_id: str) -> str | None:
+    """Read persisted source-repair results. Returns None if not found."""
+    repair_path = project_dir(workspace, project_id) / _META_DIR / "repair.json"
+    if not repair_path.is_file():
+        return None
+    return repair_path.read_text(encoding="utf-8")
+
+
 def save_upload(
     files: list[tuple[str, bytes]],
     workspace: Path | None = None,

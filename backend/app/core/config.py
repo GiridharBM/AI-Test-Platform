@@ -115,6 +115,13 @@ IMPROVE_MAX_CHANGES = 100                 # cap on improvement changes per run
 IMPROVE_MAX_TEST_FILES = 1_000            # cap on generated test files improved
 IMPROVE_MAX_TEST_BYTES = 512 * 1024       # per improved file byte limit (512 KiB)
 
+# --- Source repair limits (Milestone 11) -------------------------------------
+# REPAIR_MAX_ATTEMPTS: maximum distinct evidence-supported candidates validated
+#   per repair run. The loop stops immediately on a pass and never exceeds this.
+#   Bounds: hard-capped at REPAIR_MAX_ATTEMPTS_HARD_MAX by the service.
+REPAIR_MAX_ATTEMPTS = 3
+REPAIR_MAX_ATTEMPTS_HARD_MAX = 10
+
 # --- Evaluation limits (Milestone 10) ----------------------------------------
 # Each setting: name / purpose / safe default / bounds.
 # EVALUATION_MAX_MUTANTS: cap on total mutants generated+executed per evaluation.

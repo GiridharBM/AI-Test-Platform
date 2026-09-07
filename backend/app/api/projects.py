@@ -237,6 +237,53 @@ def evaluate_project(project_id: str):
     return run_evaluation(project_id)
 
 
+@router.post("/{project_id}/repair")
+def repair_project(project_id: str):
+    """Generate and validate bounded source repair candidates (M11).
+
+    Consumes the M7 diagnosis, M3 CodeMap, M4 TestPlan and M9 re-test result.
+    Validates each evidence-supported candidate ONLY inside an isolated repair
+    workspace using the existing M6 Docker runner, stopping at the first pass
+    (or after REPAIR_MAX_ATTEMPTS). NEVER modifies the original source here;
+    a passing candidate is returned as `validated_pending_approval` awaiting
+    explicit human approval via /approve.
+    """
+    ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_retest(config.WORKSPACE_DIR, project_id) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No re-test result. Run /retest first.",
+        )
+
+    from app.services.repair import repair_project as run_repair
+
+    return run_repair(project_id)
+
+
+@router.post("/{project_id}/repair/approve")
+def repair_approve(project_id: str):
+    """Explicit human approval: apply the validated candidate to original source.
+
+    Applies ONLY the exact candidate that passed sandbox validation, after
+    verifying candidate state, source existence/containment, and that the
+    original source still matches the candidate's expected `before` content.
+    Runs final validation against the applied source. Refuses to overwrite
+    newer user changes.
+    """
+    ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_repair(config.WORKSPACE_DIR, project_id) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No repair result. Run /repair first.",
+        )
+
+    from app.services.repair import approve_repair as run_approve
+
+    return run_approve(project_id)
+
+
 def _read_python_files(root: Path) -> list[tuple[str, str]]:
     """Read all Python files under root, returning (relative_posix_path, content)."""
     from app.core import config as cfg
@@ -305,9 +352,15 @@ def get_project(project_id: str) -> ProjectDetails:
     if raw_eval:
         from app.models.evaluation import EvaluationResult
         evaluation = EvaluationResult.model_validate_json(raw_eval)
+    raw_repair = ingestion.read_repair(config.WORKSPACE_DIR, project_id)
+    repair = None
+    if raw_repair:
+        from app.models.repair import RepairResult
+        repair = RepairResult.model_validate_json(raw_repair)
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
         execution=execution, diagnosis=diagnosis,
         improvement=improvement, retest=retest, evaluation=evaluation,
+        repair=repair,
     )

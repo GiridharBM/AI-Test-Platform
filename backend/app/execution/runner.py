@@ -278,6 +278,7 @@ def execute_tests(
     memory_limit: str | None = None,
     cpu_limit: float | None = None,
     image: str | None = None,
+    source_root: Path | None = None,
 ) -> TestExecutionResult:
     """Execute generated tests inside a Docker sandbox.
 
@@ -288,6 +289,11 @@ def execute_tests(
         memory_limit: Override Docker memory limit string (e.g. "512m").
         cpu_limit: Override EXECUTION_CPU_LIMIT.
         image: Override Docker image name.
+        source_root: Override the default source directory mounted read-only at
+            /source (PYTHONPATH=/source). M11 uses this to validate a repair
+            candidate in an isolated workspace while reusing this single M6
+            Docker execution path. Defaults to
+            workspace/{project_id}/source.
 
     Returns:
         TestExecutionResult with structured execution information.
@@ -332,7 +338,7 @@ def execute_tests(
         # dir and is mounted `:ro`; the host's real source is never mounted
         # directly and cannot be modified by the (read-only) container.
         source_dest = work_dir / "source"
-        source_root = Path(config.WORKSPACE_DIR) / project_id / "source"
+        source_root = source_root or (Path(config.WORKSPACE_DIR) / project_id / "source")
         have_source = source_root.is_dir()
         if have_source:
             shutil.copytree(source_root, source_dest, symlinks=False)
