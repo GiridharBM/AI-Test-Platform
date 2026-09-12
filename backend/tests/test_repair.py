@@ -5,14 +5,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from app.models.codemap import CodeMap, SourceFunction, SourceModule
+from app.models.codemap import CodeMap, SourceFunction, SourceModule, TestMapping
 from app.models.diagnosis import (
     DiagnosisFinding,
     DiagnosisResult,
     DiagnosisSummary,
     SourceLocation,
 )
-from app.models.execution import ExecutionSummary, TestExecutionResult, TestFileResult
+from app.models.execution import (
+    ExecutionSummary,
+    STATUS_FAILED,
+    STATUS_PASSED,
+    TestExecutionResult,
+    TestFileResult,
+)
 from app.models.retest import (
     ReTestComparison,
     ReTestResult,
@@ -160,6 +166,28 @@ def _exec_result(overall: str, failed: int, errors: int = 0) -> TestExecutionRes
             passed=1 if overall == "passed" else 0,
             failed=failed,
             errors=errors,
+        ),
+        file_results=[TestFileResult(file_path="test_calc.py", status=overall)],
+    )
+
+
+def _suite_result(statuses: dict[str, str], overall: str | None = None) -> TestExecutionResult:
+    """A TestExecutionResult with pytest -v stdout carrying per-test statuses.
+
+    Keys are bare test function names; values are "passed"/"failed"/"error".
+    """
+    lines = "\n".join(f"test_calc.py::{name} {status.upper()}" for name, status in statuses.items())
+    failed = sum(1 for s in statuses.values() if s != STATUS_PASSED)
+    passed = len(statuses) - failed
+    overall = overall or (STATUS_PASSED if failed == 0 else STATUS_FAILED)
+    return TestExecutionResult(
+        project_id="proj",
+        overall_status=overall,
+        exit_code=0 if failed == 0 else 1,
+        stdout=lines + "\n",
+        summary=ExecutionSummary(
+            total_files=1, total_test_functions=len(statuses),
+            passed=passed, failed=failed,
         ),
         file_results=[TestFileResult(file_path="test_calc.py", status=overall)],
     )
@@ -332,13 +360,18 @@ class TestApply:
 
 
 class TestRepairLoop:
-    def _run(self, tmp_path, mock_return, source_text="def add(a, b):\n    return a - b\n", pid="proj"):
+    def _run(self, tmp_path, execute_results, source_text="def add(a, b):\n    return a - b\n",
+             pid="proj", still_failing=("test_add_basic",), gt_text=None):
         p = _project(tmp_path, source_text)
+        if gt_text is not None:
+            (p["gt"] / "test_calc.py").write_text(gt_text, encoding="utf-8")
         cm = _codemap(project_id=pid)
         diag = _diagnosis()
         plan = _plan()
-        retest = _retest(["test_add_basic"], project_id=pid)
-        with patch("app.execution.runner.execute_tests", return_value=mock_return) as mock:
+        retest = _retest(list(still_failing), project_id=pid)
+        results = execute_results if isinstance(execute_results, list) else [execute_results]
+        kwargs = {"side_effect": results} if len(results) > 1 else {"return_value": results[0]}
+        with patch("app.execution.runner.execute_tests", **kwargs) as mock:
             result = repair_from_artifacts(
                 diag, cm, plan, retest,
                 source_dir=p["source"],
@@ -373,20 +406,26 @@ class TestRepairLoop:
         assert not mock.called
 
     def test_validated_pending_approval_on_first_pass(self, tmp_path):
-        result, mock, p = self._run(tmp_path, _exec_result("passed", 0))
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "passed"})
+        result, mock, p = self._run(tmp_path, [baseline, candidate])
         assert result.status == REPAIR_VALIDATED_PENDING_APPROVAL
         assert result.selected_candidate is not None
         assert result.selected_candidate.after == "return a + b"
+        assert result.selected_candidate.target_function == "add"
         assert result.selected_candidate.attempt_number == 1
         assert len(result.attempts) == 1
         assert result.attempts[0].validation_status == "passed"
-        assert mock.call_count == 1
+        # baseline run + one candidate validation run
+        assert mock.call_count == 2
         # Original source untouched.
         assert (p["source"] / "calc.py").read_text(encoding="utf-8") == "def add(a, b):\n    return a - b\n"
 
     def test_original_source_never_modified(self, tmp_path):
         source_text = "def add(a, b):\n    return a - b\n"
-        result, _, p = self._run(tmp_path, _exec_result("failed", 1), source_text=source_text)
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "failed"})
+        result, _, p = self._run(tmp_path, [baseline, candidate], source_text=source_text)
         assert (p["source"] / "calc.py").read_text(encoding="utf-8") == source_text
         # Source file count unchanged (no mutation artifacts in original tree).
         assert len(list(p["source"].iterdir())) == 1
@@ -395,13 +434,17 @@ class TestRepairLoop:
         # Two distinct still-failing functions each yield a candidate.
         p = _project(tmp_path, "def add(a, b):\n    return a - b\n\ndef sub(a, b):\n    return a * b\n")
         cm = _codemap()
-        # Mutation: the first candidate (add) fails, the second (sub) passes.
+        # Baseline: both fail. First candidate (add) fails; second (sub) passes.
         plan = _plan()
         diag = _diagnosis()
         retest = _retest(["test_add_basic", "test_sub_basic"])
         with patch(
             "app.execution.runner.execute_tests",
-            side_effect=[_exec_result("failed", 1), _exec_result("passed", 0)],
+            side_effect=[
+                _suite_result({"test_add_basic": "failed", "test_sub_basic": "failed"}),
+                _suite_result({"test_add_basic": "failed", "test_sub_basic": "failed"}),
+                _suite_result({"test_add_basic": "failed", "test_sub_basic": "passed"}),
+            ],
         ) as mock:
             result = repair_from_artifacts(
                 diag, cm, plan, retest,
@@ -411,28 +454,23 @@ class TestRepairLoop:
         assert len(result.attempts) == 2
         assert result.attempts[0].validation_status == "failed"
         assert result.attempts[1].validation_status == "passed"
-        assert mock.call_count == 2
+        assert mock.call_count == 3  # baseline + two candidate runs
 
     def test_all_failed_returns_failed(self, tmp_path):
-        result, mock, _ = self._run(tmp_path, _exec_result("failed", 1))
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "failed"})
+        result, mock, _ = self._run(tmp_path, [baseline, candidate])
         assert result.status != REPAIR_BLOCKED
         assert mock.call_count >= 1
 
     def test_no_duplicate_candidate_execution(self, tmp_path):
         # All candidates fail -> 'failed'; verify the same candidate id never runs twice.
-        p = _project(tmp_path, "def add(a, b):\n    return a - b\n")
-        cm = _codemap()
-        plan = _plan()
-        diag = _diagnosis()
-        retest = _retest(["test_add_basic"])
-        with patch("app.execution.runner.execute_tests", return_value=_exec_result("failed", 1)) as mock:
-            result = repair_from_artifacts(
-                diag, cm, plan, retest,
-                source_dir=p["source"], generated_test_dir=p["gt"], project_id="proj",
-            )
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "failed"})
+        result, mock, _ = self._run(tmp_path, [baseline, candidate])
         ids = {a.candidate_id for a in result.attempts}
         assert len(ids) == len(result.attempts)  # no repeat
-        assert mock.call_count == len(ids)
+        assert mock.call_count == len(ids) + 1  # +1 for the baseline run
 
     def test_unavailable_returns_unavailable(self, tmp_path):
         result, _, _ = self._run(tmp_path, TestExecutionResult(
@@ -444,8 +482,160 @@ class TestRepairLoop:
     def test_bounded_loop_respects_config(self, tmp_path):
         import app.core.config as config
         config.REPAIR_MAX_ATTEMPTS = 2
-        result, mock, _ = self._run(tmp_path, _exec_result("failed", 1))
-        assert mock.call_count <= 2
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "failed"})
+        result, mock, _ = self._run(tmp_path, [baseline, candidate])
+        assert mock.call_count <= 3
+
+    def test_rejected_when_target_failure_remains(self, tmp_path):
+        # B: the candidate fixes nothing the tests can observe -> rejected.
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "failed"})
+        result, mock, _ = self._run(tmp_path, [baseline, candidate])
+        assert result.status == REPAIR_FAILED
+        assert result.selected_candidate is None
+        assert result.attempts[0].validation_status == "failed"
+        assert "target" in result.attempts[0].failure_reason
+
+    def test_rejected_when_regression(self, tmp_path):
+        # C: target passes but a previously-passing unrelated test fails -> rejected.
+        gt_text = "def test_add_basic():\n    assert True\n\ndef test_helper_passes():\n    assert True\n"
+        baseline = _suite_result({"test_add_basic": "failed", "test_helper_passes": "passed"})
+        candidate = _suite_result({"test_add_basic": "passed", "test_helper_passes": "failed"})
+        result, _, _ = self._run(tmp_path, [baseline, candidate], gt_text=gt_text)
+        assert result.status == REPAIR_FAILED
+        assert result.selected_candidate is None
+        assert "regression" in result.attempts[0].failure_reason
+        assert "test_helper_passes" in result.attempts[0].failure_reason
+
+    def test_pre_existing_scaffold_failure_allows(self, tmp_path):
+        # D: an unrelated pre-existing NotImplementedError scaffold must not
+        # invalidate a candidate whose target is safely resolved with no regressions.
+        gt_text = (
+            "def test_add_basic():\n    assert True\n\n"
+            "def test_add_edge_a_none():\n    raise NotImplementedError('edge case: None')\n"
+        )
+        baseline = _suite_result({"test_add_basic": "failed", "test_add_edge_a_none": "failed"})
+        candidate = _suite_result({"test_add_basic": "passed", "test_add_edge_a_none": "failed"})
+        result, mock, _ = self._run(
+            tmp_path, [baseline, candidate], gt_text=gt_text,
+            still_failing=("test_add_basic", "test_add_edge_a_none"),
+        )
+        assert result.status == REPAIR_VALIDATED_PENDING_APPROVAL
+        assert len(result.attempts) == 1
+        assert result.attempts[0].validation_status == "passed"
+
+    def test_fail_closed_when_only_scaffold_targets(self, tmp_path):
+        # E: the target's only linked test is a scaffold -> no behavioural
+        # evidence the repair changes anything -> fail closed (reject).
+        gt_text = (
+            "def test_add_basic():\n    assert True\n\n"
+            "def test_add_edge_a_none():\n    raise NotImplementedError('edge case: None')\n"
+        )
+        baseline = _suite_result({"test_add_basic": "passed", "test_add_edge_a_none": "failed"})
+        candidate = _suite_result({"test_add_basic": "passed", "test_add_edge_a_none": "failed"})
+        result, _, _ = self._run(
+            tmp_path, [baseline, candidate], gt_text=gt_text,
+            still_failing=("test_add_edge_a_none",),
+        )
+        assert result.status == REPAIR_FAILED
+        assert result.selected_candidate is None
+        assert "target" in result.attempts[0].failure_reason
+
+    def test_early_stop_when_no_more_candidates(self, tmp_path):
+        # G: after the only candidate fails, stop early with the exact reason.
+        baseline = _suite_result({"test_add_basic": "failed"})
+        candidate = _suite_result({"test_add_basic": "failed"})
+        result, mock, _ = self._run(tmp_path, [baseline, candidate])
+        assert result.status == REPAIR_FAILED
+        assert "No additional evidence-supported candidate available; stopped early." in result.reasons
+        assert mock.call_count == 2
+
+
+class TestUserBehavioralTargetResolution:
+    """Regression: user-written behavioral test names (`test_add_returns_sum`)
+    are only resolvable through the CodeMap `test_mappings`, never through the
+    M8 naming grammar; M11 must use those mappings for both target resolution
+    and still-failing linkage or the candidate is silently rejected."""
+
+    @staticmethod
+    def _codemap_with_mapping() -> CodeMap:
+        cm = _codemap()
+        cm.test_mappings = [
+            TestMapping(
+                test_function="test_add_returns_sum",
+                test_file="user_test_calc.py",
+                source_target="calc.add",
+                source_file="calc.py",
+                confidence=0.9,
+                method="import_analysis",
+            ),
+            TestMapping(
+                test_function="test_sub_negative",
+                test_file="user_test_calc.py",
+                source_target="calc.sub",
+                source_file="calc.py",
+                confidence=0.8,
+                method="import_analysis",
+            ),
+        ]
+        return cm
+
+    def test_resolve_repair_targets_uses_mappings(self):
+        cm = self._codemap_with_mapping()
+        retest = _retest(["test_add_returns_sum"])
+        targets = repair_service._resolve_repair_targets(cm, retest, None, {})
+        assert [t.qualified_name for t in targets] == ["calc.add"]
+
+    def test_grammar_fallback_unchanged(self):
+        cm = _codemap()
+        retest = _retest(["test_add_basic"])
+        targets = repair_service._resolve_repair_targets(cm, retest, None, {})
+        assert [t.qualified_name for t in targets] == ["calc.add"]
+
+    def test_ambiguous_mapping_fails_closed(self):
+        cm = self._codemap_with_mapping()
+        cm.test_mappings[0].source_target = "calc.missing_target"
+        retest = _retest(["test_add_returns_sum"])
+        targets = repair_service._resolve_repair_targets(cm, retest, None, {})
+        assert targets == []
+
+    def test_still_failing_linkage_via_mappings(self):
+        cm = self._codemap_with_mapping()
+        retest = _retest(["test_add_returns_sum", "test_sub_negative"])
+        still = repair_service._still_failing_tests_for_target(
+            retest.comparisons, codemap=cm
+        )
+        assert still["calc.add"] == {"test_add_returns_sum"}
+        assert still["add"] == {"test_add_returns_sum"}
+        assert still["calc.sub"] == {"test_sub_negative"}
+
+    def test_validated_approval_through_user_behavioral_test(self, tmp_path):
+        """End-to-end: a mapping-resolved user test drives the repair to
+        validated_pending_approval. Regression: pre-fix, the still-failing
+        linkage could not match `test_add_returns_sum` to `add`, so the
+        candidate was always rejected for 'target failure not resolved'."""
+        p = _project(tmp_path, "def add(a, b):\n    return a - b\n")
+        (p["gt"] / "user_test_calc.py").write_text(
+            "def test_add_returns_sum():\n    assert add(2, 3) == 5\n", encoding="utf-8"
+        )
+        cm = self._codemap_with_mapping()
+        diag = _diagnosis()
+        plan = _plan()
+        retest = _retest(["test_add_returns_sum"])
+        baseline = _suite_result({"test_add_returns_sum": "failed"})
+        candidate = _suite_result({"test_add_returns_sum": "passed"})
+        with patch("app.execution.runner.execute_tests", side_effect=[baseline, candidate]):
+            result = repair_from_artifacts(
+                diag, cm, plan, retest,
+                source_dir=p["source"], generated_test_dir=p["gt"], project_id="proj",
+            )
+        assert result.status == REPAIR_VALIDATED_PENDING_APPROVAL
+        assert result.selected_candidate is not None
+        assert result.selected_candidate.after == "return a + b"
+        assert result.selected_candidate.target_function == "add"
+        assert len(result.attempts) == 1
+        assert result.attempts[0].validation_status == "passed"
 
 
 class TestApproval:

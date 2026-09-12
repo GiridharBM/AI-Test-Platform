@@ -39,3 +39,6 @@ class TestGenerationResult(BaseModel):
     files: list[GeneratedTestFile] = []
     summary: GenerationSummary = GenerationSummary()
     warnings: list[str] = []
+    # Discovered user-authored test files that were merged into the generated
+    # suite under collision-safe `user_*` names (generated_tests-relative).
+    merged_user_files: list[str] = []

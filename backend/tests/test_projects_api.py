@@ -70,11 +70,14 @@ def test_health_still_works(client):
     assert res.json() == {"status": "ok", "service": "ai-test-platform"}
 
 
-def test_get_project_without_profile(client):
-    res = client.post(
-        "/api/projects/upload",
-        files=[("files", ("x.py", b"print(1)"))],
-    )
+def test_get_project_without_profile(client, tmp_path):
+    # from-path registration does NOT auto-start the pipeline, so a registered
+    # project has no profile until the user explicitly runs /profile.
+    d = tmp_path / "unprofiled"
+    d.mkdir()
+    (d / "x.py").write_text("print(1)")
+    res = client.post("/api/projects/from-path", json={"path": str(d)})
+    assert res.status_code == 200
     pid = res.json()["project_id"]
     res2 = client.get(f"/api/projects/{pid}")
     assert res2.status_code == 200

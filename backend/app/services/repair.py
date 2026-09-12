@@ -39,8 +39,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core import config
+from app.models.codemap import SourceFunction
 from app.models.execution import (
+    STATUS_ERROR,
+    STATUS_FAILED,
     STATUS_PASSED,
+    STATUS_TIMEOUT,
     STATUS_UNAVAILABLE,
     TestExecutionResult,
 )
@@ -193,6 +197,7 @@ def _generate_candidate(
             f"the operator with the named operation family."
         ),
         confidence=confidence,
+        target_function=fn_name,
     )
 
 
@@ -335,6 +340,168 @@ def _validated_exec(*, test_dir: Path, project_id: str, source_root: Path) -> Te
     return execute_tests(test_dir, project_id, source_root=source_root)
 
 
+def _parse_test_statuses(exec_result: TestExecutionResult | None) -> dict[str, str]:
+    """Parse per-test-function statuses from pytest -v stdout lines.
+
+    Line contract is the M6 runner's own:
+        "<file>::<test_function> PASSED|FAILED|ERROR|SKIPPED"
+    The worst status wins per test name (an ambiguous name fails closed).
+    Keyed by the bare test function name, matching the retest comparisons.
+    """
+    from app.execution.runner import _PROGRESS_RE
+
+    statuses: dict[str, str] = {}
+    if exec_result is None or not exec_result.stdout:
+        return statuses
+    priority = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
+    for line in exec_result.stdout.splitlines():
+        line = _PROGRESS_RE.sub("", line.rstrip()).rstrip()
+        if "::" not in line:
+            continue
+        status = None
+        for word in ("PASSED", "FAILED", "ERROR", "SKIPPED"):
+            if line.endswith(word):
+                status = word.lower()
+                break
+        if status is None:
+            continue
+        test_name = line.rsplit("::", 1)[1][: -len(status)].strip()
+        if not test_name:
+            continue
+        prev = statuses.get(test_name)
+        if prev is None or priority[status] > priority.get(prev, 0):
+            statuses[test_name] = status
+    return statuses
+
+
+def _mapped_target_names(
+    codemap, idx: dict[str, SourceFunction], test_function: str,
+) -> list[str]:
+    """Resolve a test function to its CodeMap-mapped source target names.
+
+    Returns the target's bare and qualified names when it resolves to a real
+    top-level function. This is the linkage that supports user-written test
+    names like `test_add_returns_sum` that the M8 naming grammar can never
+    derive (grammar only strips `_basic`/`_usage`/`_edge_*` suffixes).
+    """
+    if codemap is None:
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for m in codemap.test_mappings:
+        if m.test_function != test_function or not m.source_target:
+            continue
+        tgt = idx.get(m.source_target)
+        if isinstance(tgt, SourceFunction):
+            for cand in (tgt.name, tgt.qualified_name):
+                if cand and cand not in seen:
+                    seen.add(cand)
+                    names.append(cand)
+    return names
+
+
+def _still_failing_tests_for_target(
+    comparisons, codemap=None, idx: dict[str, SourceFunction] | None = None,
+) -> dict[str, set[str]]:
+    """Map source target name -> set of M9 still-failing test functions linked.
+
+    Uses both the CodeMap `test_mappings` (primary: resolves user behavioral
+    test names) and the M8 deterministic naming grammar that
+    `_resolve_repair_targets` relies on, so the linkage covers every resolution
+    path frozen into the repair contract.
+    """
+    from app.services.improvement import _candidate_target_keys, _source_index
+
+    if idx is None:
+        idx = _source_index(codemap)
+    result: dict[str, set[str]] = {}
+    for comp in comparisons or []:
+        if comp.verdict != "still_failing":
+            continue
+        keys = list(_mapped_target_names(codemap, idx, comp.test_function))
+        keys.extend(_candidate_target_keys(comp.test_function))
+        for key in keys:
+            result.setdefault(key, set()).add(comp.test_function)
+    return result
+
+
+def _behavioral_test_functions(
+    generated_test_dir: Path, funcs_by_file: dict[str, set[str]],
+) -> set[str]:
+    """Return test functions that are NOT still NotImplementedError scaffolds.
+
+    A scaffold raises inside the *test body* and can never be resolved by any
+    source repair, so it carries no evidence about a candidate. Reading the
+    generated test file M11 actually copies is ground truth. When a file cannot
+    be read/parsed, the test is treated as behavioral (fail closed).
+    """
+    import ast
+
+    from app.services.improvement import _safe_generated_rel_path
+
+    behavioral: set[str] = set()
+    for test_file, func_names in (funcs_by_file or {}).items():
+        rel = _safe_generated_rel_path(test_file)
+        if rel is None:
+            behavioral.update(func_names)
+            continue
+        test_path = generated_test_dir / rel
+        if not test_path.is_file():
+            behavioral.update(func_names)
+            continue
+        try:
+            content = test_path.read_text(encoding="utf-8")
+            tree = ast.parse(content)
+        except (OSError, SyntaxError):
+            behavioral.update(func_names)
+            continue
+        found: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in func_names:
+                found.add(node.name)
+                snippet = ast.get_source_segment(content, node) or ""
+                if "raise NotImplementedError" not in snippet:
+                    behavioral.add(node.name)
+        behavioral.update(func_names - found)  # unlocatable -> conservative
+    return behavioral
+
+
+def _has_target_transition(
+    baseline: dict[str, str], candidate: dict[str, str], target_tests: set[str],
+) -> bool:
+    """True when at least one target-linked test moved failing -> passing.
+
+    A candidate that only ['changes the source line', 'runs', 'passes an
+    already-passing test'] cannot show a failing -> passing transition and is
+    therefore not evidence-supported. Unfixable pre-existing failures are
+    permitted to remain failing only when they never passed at baseline.
+    """
+    if not target_tests:
+        return False
+    for test in target_tests:
+        if (
+            baseline.get(test, "")
+            and baseline.get(test) != STATUS_PASSED
+            and candidate.get(test) == STATUS_PASSED
+        ):
+            return True
+    return False
+
+
+def _find_regressions(
+    baseline: dict[str, str], candidate: dict[str, str],
+) -> list[str]:
+    """Tests that were passing at baseline but fail (or vanish) in the candidate run."""
+    regressions: set[str] = set()
+    for test, base_status in baseline.items():
+        if base_status == STATUS_PASSED and candidate.get(test) != STATUS_PASSED:
+            regressions.add(test)
+    for test, cand_status in candidate.items():
+        if cand_status != STATUS_PASSED and test not in baseline:
+            regressions.add(test)  # unknown at baseline -> fail closed
+    return sorted(regressions)
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -349,27 +516,27 @@ def _resolve_repair_targets(
 ):
     """Resolve still-failing test functions to their source functions.
 
-    Uses the M8 deterministic naming grammar as the linkage contract so the
-    same `test_<target>_basic` / `test_<target>_edge_...` names that caused the
-    M8 remediation issue resolve deterministically here.
+    Uses improvement's `_resolve_target`, which prefers the CodeMap's
+    `test_mappings` (the only linkage that resolves user behavioral test names
+    like `test_add_returns_sum`) and falls back to the M8 deterministic naming
+    grammar for generated `test_<target>_basic`/`_edge_*` names. Ambiguous
+    matches resolve to nothing (fail closed, matching M8/M11 boundaries).
     """
-    from app.services.improvement import _candidate_target_keys, _unique_top_level_by_name
+    from app.services.improvement import _resolve_target, _source_index
 
+    idx = _source_index(codemap)
     targeted: list = []
     seen: set[str] = set()
     comparisons = re_test_.comparisons if re_test_ is not None else []
     for comp in comparisons:
         if comp.verdict != "still_failing":
             continue
-        found = False
-        for key in _candidate_target_keys(comp.test_function):
-            fn = _unique_top_level_by_name(codemap, key)
-            if fn is not None and not hasattr(fn, "methods"):
-                if fn.qualified_name not in seen:
-                    seen.add(fn.qualified_name)
-                    targeted.append(fn)
-                found = True
-                break
+        qn, fn = _resolve_target(comp.test_function, codemap, idx)
+        if fn is None or not isinstance(fn, SourceFunction):
+            continue
+        if qn not in seen:
+            seen.add(qn)
+            targeted.append(fn)
     return targeted
 
 
@@ -417,6 +584,7 @@ def repair_from_artifacts(
 
     # --- Build the candidate pool (bounded + evidence-supported) ---
     pool: list[RepairCandidate] = []
+    cand_to_fn: dict[str, object] = {}  # candidate_id -> source function it repairs
     seen_cands: set[str] = set()
     for fn in sorted(targets, key=lambda f: (f.file_path, f.line_start)):
         source_file = _resolve_source_file(source_dir, fn.file_path)
@@ -424,7 +592,7 @@ def repair_from_artifacts(
             warnings.append(f"source unreachable/unsafe for {fn.qualified_name}.")
             continue
         try:
-            content = source_file.read_text(encoding="utf-8")
+            content = source_file.read_text(encoding="utf-8-sig")
         except OSError as exc:
             warnings.append(f"could not read source for {fn.qualified_name}: {exc}")
             continue
@@ -434,6 +602,7 @@ def repair_from_artifacts(
             if cand.candidate_id not in seen_cands:
                 seen_cands.add(cand.candidate_id)
                 pool.append(cand)
+                cand_to_fn[cand.candidate_id] = fn
 
     if not pool:
         return RepairResult(
@@ -444,6 +613,26 @@ def repair_from_artifacts(
             created_at=_now(),
         )
 
+    # --- Target-linkage evidence (frozen M8 naming grammar) ---
+    # For each still-failing target function, collect the generated tests that
+    # actually carry behavioural evidence: tests whose bodies are NOT still
+    # `raise NotImplementedError` scaffolds. Scaffolds raise inside the test
+    # itself and can never be resolved by a source repair.
+    still_by_target = _still_failing_tests_for_target(
+        re_test.comparisons if re_test is not None else [],
+        codemap=codemap,
+    )
+    funcs_by_file: dict[str, set[str]] = {}
+    for comp in (re_test.comparisons if re_test is not None else []):
+        if comp.verdict == "still_failing":
+            funcs_by_file.setdefault(comp.test_file, set()).add(comp.test_function)
+    behavioral_tests = _behavioral_test_functions(generated_test_dir, funcs_by_file)
+    target_tests: dict[str, set[str]] = {}
+    for fn in targets:
+        target_tests[fn.qualified_name] = {
+            t for t in still_by_target.get(fn.name, set()) if t in behavioral_tests
+        }
+
     # --- Bounded validation loop ---
     attempts: list[RepairAttempt] = []
     selected: RepairCandidate | None = None
@@ -453,6 +642,37 @@ def repair_from_artifacts(
 
     # Deterministic order: confidence desc, then file/line for stability.
     pool.sort(key=lambda c: (-c.confidence, c.file_path, c.source_location))
+
+    # --- Deterministic status-quo baseline run (tests against the UNMODIFIED
+    # source), executed once and reused for every candidate. It provides the
+    # per-test "before" state: previously-passing tests that a candidate must
+    # not break, and target failures it must resolve. ---
+    baseline_exec = _validated_exec(
+        test_dir=generated_test_dir, project_id=project_id,
+        source_root=source_dir,
+    )
+    if baseline_exec.overall_status == STATUS_UNAVAILABLE:
+        return RepairResult(
+            project_id=project_id, status=REPAIR_UNAVAILABLE,
+            retest_diagnosis_id=(re_test.diagnosis_id if re_test else ""),
+            warnings=warnings + ["Docker execution environment unavailable for repair baseline."],
+            reasons=["repair blocked: Docker execution environment unavailable."],
+            created_at=_now(),
+        )
+    if baseline_exec.overall_status in (STATUS_TIMEOUT, STATUS_ERROR):
+        return RepairResult(
+            project_id=project_id, status=REPAIR_UNAVAILABLE,
+            retest_diagnosis_id=(re_test.diagnosis_id if re_test else ""),
+            warnings=warnings + ["Repair baseline execution errored/timed out; candidates cannot be validated safely."],
+            reasons=["repair blocked: baseline execution unusable."],
+            created_at=_now(),
+        )
+    baseline_statuses = _parse_test_statuses(baseline_exec)
+    if not baseline_statuses:
+        warnings.append(
+            "Baseline execution produced no parseable per-test statuses; "
+            "candidate validation will fail closed."
+        )
 
     for attempt_no in range(1, max_attempts + 1):
         # Stop early when no further evidence-supported candidate remains.
@@ -505,11 +725,50 @@ def repair_from_artifacts(
             unavailable = True
             break
 
-        passed = (
-            exec_result.overall_status == STATUS_PASSED
-            and exec_result.summary.failed == 0
-            and exec_result.summary.errors == 0
+        # --- Targeted acceptance ---
+        # 1) The candidate run must be usable (not timed out / container error).
+        # 2) At least one target-linked test must move failing -> passing
+        #    (real sandbox evidence that the repair changed behaviour).
+        # 3) No previously-passing test may become failing (no regressions).
+        target_fn = cand_to_fn.get(next_cand.candidate_id)
+        target_funcs = (
+            target_tests.get(target_fn.qualified_name, set())
+            if target_fn is not None else set()
         )
+        cand_statuses = _parse_test_statuses(exec_result)
+        run_unusable = exec_result.overall_status in (STATUS_TIMEOUT, STATUS_ERROR)
+        resolved = _has_target_transition(baseline_statuses, cand_statuses, target_funcs)
+        regressions = _find_regressions(baseline_statuses, cand_statuses)
+
+        passed = (not run_unusable and resolved and not regressions)
+
+        if not passed:
+            if not resolved and regressions:
+                failure_reason = (
+                    f"Candidate validation rejected: target failure(s) not resolved and "
+                    f"{len(regressions)} regression(s) in previously-passing tests: "
+                    f"{', '.join(regressions)}."
+                )
+            elif not resolved:
+                failure_reason = (
+                    "Candidate validation rejected: target failure(s) not resolved "
+                    "(no evidence the repaired source moved any target test from "
+                    "failing to passing)."
+                )
+            elif regressions:
+                failure_reason = (
+                    f"Candidate validation rejected: {len(regressions)} regression(s) "
+                    f"in previously-passing tests: {', '.join(regressions)}."
+                )
+            else:
+                failure_reason = (
+                    f"Candidate validation rejected: overall={exec_result.overall_status}, "
+                    f"passed={exec_result.summary.passed}, failed={exec_result.summary.failed}, "
+                    f"errors={exec_result.summary.errors}."
+                )
+        else:
+            failure_reason = ""
+
         attempts.append(RepairAttempt(
             attempt_number=attempt_no,
             candidate_id=next_cand.candidate_id,
@@ -521,17 +780,17 @@ def repair_from_artifacts(
             rationale=next_cand.rationale,
             validation_status=VALIDATION_PASSED if passed else VALIDATION_FAILED,
             execution_result=exec_result.model_dump(),
-            failure_reason=(
-                ""
-                if passed else
-                f"Candidate validation failed: overall={exec_result.overall_status}, "
-                f"passed={exec_result.summary.passed}, failed={exec_result.summary.failed}, "
-                f"errors={exec_result.summary.errors}."
-            ),
+            failure_reason=failure_reason,
             created_at=_now(),
         ))
         if passed:
-            cand_for_result = next_cand.model_copy(update={"attempt_number": attempt_no})
+            cand_for_result = next_cand.model_copy(
+                update={"attempt_number": attempt_no, "target_function": next_cand.target_function},
+            )
+            reasons.append(
+                f"Candidate {cand_for_result.candidate_id} validated in attempt {attempt_no} "
+                f"(target failure resolved, no regressions)."
+            )
             return RepairResult(
                 project_id=project_id,
                 status=REPAIR_VALIDATED_PENDING_APPROVAL,
@@ -541,7 +800,7 @@ def repair_from_artifacts(
                 approval_state=APPROVAL_PENDING,
                 application_state=APPLICATION_NOT_APPLIED,
                 warnings=warnings,
-                reasons=[f"Candidate {cand_for_result.candidate_id} validated in attempt {attempt_no}."],
+                reasons=reasons,
                 created_at=_now(),
             )
 

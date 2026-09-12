@@ -260,7 +260,7 @@ def _scan_tree(root: Path) -> _ScanState:
             if ext == ".py" and is_code:
                 state.has_python = True
                 try:
-                    tree = ast.parse(entry.read_text(encoding="utf-8", errors="replace"))
+                    tree = ast.parse(entry.read_text(encoding="utf-8-sig", errors="replace"))
                     f, c, m = _count_python_defs(tree)
                     state.py_functions += f
                     state.py_classes += c

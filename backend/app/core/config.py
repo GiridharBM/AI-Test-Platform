@@ -103,6 +103,11 @@ EXECUTION_CPU_LIMIT = 1.0                 # Docker --cpus
 EXECUTION_MAX_OUTPUT_BYTES = 1_048_576    # 1 MiB stdout/stderr capture limit
 EXECUTION_IMAGE_NAME = "ai-test-platform-testrunner"
 EXECUTION_DOCKERFILE = "docker/Dockerfile.testrunner"
+# Docker Desktop (Windows/WSL2) can briefly report not-ready right after a
+# container teardown or image build. Probe retries are bounded and the pipeline
+# still fails closed (unavailable) when the daemon stays unreachable.
+EXECUTION_DOCKER_PROBE_RETRIES = 2          # extra probes before declaring unavailable
+EXECUTION_DOCKER_PROBE_RETRY_DELAY = 1.0    # seconds between probe retries
 
 # --- Diagnosis limits (Milestone 7) ------------------------------------------
 DIAGNOSIS_AI_ENABLED = False              # local/private AI diagnosis is opt-in
@@ -114,6 +119,14 @@ IMPROVE_AI_ENABLED = False                # local/private AI improvement is opt-
 IMPROVE_MAX_CHANGES = 100                 # cap on improvement changes per run
 IMPROVE_MAX_TEST_FILES = 1_000            # cap on generated test files improved
 IMPROVE_MAX_TEST_BYTES = 512 * 1024       # per improved file byte limit (512 KiB)
+
+# --- Autonomous pipeline improvement loop ------------------------------------
+# AUTO_IMPROVEMENT_MAX_ROUNDS: maximum Improve -> Execute -> Diagnose rounds the
+#   autonomous orchestrator runs before pausing at the re-test decision gate.
+#   Hard-capped at AUTO_IMPROVEMENT_MAX_ROUNDS_HARD_MAX so configuration can
+#   never create an effectively unlimited loop.
+AUTO_IMPROVEMENT_MAX_ROUNDS = 3
+AUTO_IMPROVEMENT_MAX_ROUNDS_HARD_MAX = 10
 
 # --- Source repair limits (Milestone 11) -------------------------------------
 # REPAIR_MAX_ATTEMPTS: maximum distinct evidence-supported candidates validated

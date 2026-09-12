@@ -34,8 +34,10 @@ from app.services.retest import (
     _derive_file_retest_status,
     _derive_verdict,
     _select_improved_tests,
+    _select_user_behavioral_tests,
     retest_from_artifacts,
 )
+import app.services.retest as retest_service
 
 _CREATED = datetime.now(timezone.utc)
 
@@ -513,6 +515,102 @@ class TestRetestFromArtifacts:
         # Only .meta/retest.json should be writable; nothing else modified.
         generated = (gt / "test_app.py").read_text(encoding="utf-8")
         assert generated == "def test_add(): pass"  # retest doesn't modify tests
+
+
+class TestUserBehavioralSelection:
+    def test_selects_failing_user_tests_from_copied_files(self):
+        diag = _diagnosis(findings=[
+            _finding(test_file="user_test_calc.py", test_func="test_add_returns_sum"),
+            _finding(fid="f2", test_file="user_test_calc.py", test_func="test_sub_works"),
+        ])
+        selected = retest_service._select_user_behavioral_tests(
+            diag, ["user_test_calc.py"]
+        )
+        assert {s.test_function for s in selected} == {"test_add_returns_sum", "test_sub_works"}
+        assert selected[0].improvement_status == "user_behavioral"
+
+    def test_ignores_unrelated_and_unmerged_files(self):
+        diag = _diagnosis(findings=[
+            _finding(test_file="user_test_calc.py", test_func="test_add_returns_sum"),
+            _finding(fid="f2", test_file="test_calc.py", test_func="test_generated"),
+        ])
+        sel = retest_service._select_user_behavioral_tests(diag, ["user_test_calc.py"])
+        assert [s.test_function for s in sel] == ["test_add_returns_sum"]
+        assert retest_service._select_user_behavioral_tests(diag, None) == []
+        assert retest_service._select_user_behavioral_tests(None, ["user_test_calc.py"]) == []
+
+    def test_deduplicates_findings(self):
+        diag = _diagnosis(findings=[
+            _finding(test_file="user_test_calc.py", test_func="test_add_returns_sum"),
+            _finding(fid="f2", test_file="user_test_calc.py", test_func="test_add_returns_sum"),
+        ])
+        selected = retest_service._select_user_behavioral_tests(diag, ["user_test_calc.py"])
+        assert len(selected) == 1
+
+    def test_still_failing_user_behavioral_survives_blocked_improvement(self, tmp_path):
+        """A BLOCKED improvement must NOT collapse to NO_OP while a merged user
+        behavioral test is still failing — M11 needs its still-failing verdict.
+        Regression: the pre-fix fast-path returned no-op for any blocked M8."""
+        pid = "p-userblocked"
+        gt = tmp_path / pid / "generated_tests"
+        gt.mkdir(parents=True)
+        (gt / "user_test_calc.py").write_text("def test_add_returns_sum():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+
+        imp = _improvement(status="blocked")
+        diag = _diagnosis(findings=[
+            _finding(test_file="user_test_calc.py", test_func="test_add_returns_sum"),
+        ])
+        prev = _prev_exec(file_results=[
+            TestFileResult(file_path="user_test_calc.py", status="failed"),
+        ])
+        retest = _retest_exec(file_results=[
+            TestFileResult(file_path="user_test_calc.py", status="failed"),
+        ])
+        with patch("app.execution.runner.execute_tests", return_value=retest) as mock:
+            result = retest_from_artifacts(
+                imp, diag, prev, gen_root=tmp_path, project_id=pid,
+                copied_user_tests=["user_test_calc.py"],
+            )
+        assert mock.called
+        assert result.status == RETEST_STILL_FAILING
+        assert len(result.comparisons) == 1
+        assert result.comparisons[0].test_function == "test_add_returns_sum"
+        assert result.comparisons[0].verdict == VERDICT_STILL_FAILING
+        assert result.summary.still_failing == 1
+
+    def test_user_behavioral_fixed_when_now_passing(self, tmp_path):
+        """A formerly-failing user behavioral test that now passes reports fixed."""
+        pid = "p-userfixed"
+        gt = tmp_path / pid / "generated_tests"
+        gt.mkdir(parents=True)
+        (gt / "user_test_calc.py").write_text("def test_add_returns_sum():\n    assert add(2, 3) == 5\n", encoding="utf-8")
+
+        imp = _improvement(status="blocked")
+        diag = _diagnosis(findings=[
+            _finding(test_file="user_test_calc.py", test_func="test_add_returns_sum"),
+        ])
+        prev = _prev_exec(file_results=[
+            TestFileResult(file_path="user_test_calc.py", status="failed"),
+        ])
+        retest = _retest_exec(file_results=[
+            TestFileResult(file_path="user_test_calc.py", status="passed"),
+        ])
+        with patch("app.execution.runner.execute_tests", return_value=retest):
+            result = retest_from_artifacts(
+                imp, diag, prev, gen_root=tmp_path, project_id=pid,
+                copied_user_tests=["user_test_calc.py"],
+            )
+        assert result.status == RETEST_FIXED
+        assert result.comparisons[0].verdict == VERDICT_FIXED
+
+    def test_no_op_still_returned_when_user_tests_absent(self, tmp_path):
+        """Without copied user tests the blocked/no_change fast-path is preserved."""
+        imp = _improvement(status="blocked")
+        result = retest_from_artifacts(
+            imp, _diagnosis(findings=[_finding()]), None,
+            gen_root=tmp_path, project_id="p1", copied_user_tests=[],
+        )
+        assert result.status == RETEST_NO_OP
 
 
 class TestRetestResultModel:

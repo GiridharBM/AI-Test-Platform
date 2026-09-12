@@ -6,10 +6,12 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core import config
+from app.models.pipeline import PipelineState
 from app.models.project import LocalPathRequest, ProjectDetails, ProjectMeta, ProjectProfile
 from app.services import project_ingestion as ingestion
 from app.services import project_profiler as profiler
 from app.services import project_discovery as discovery
+from app.services import pipeline as pipeline_service
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -32,7 +34,16 @@ def upload_project(
         rel = (paths[i] if paths else None) or f.filename or ""
         content = f.file.read(config.MAX_FILE_SIZE_BYTES + 1)
         payload.append((rel, content))
-    return ingestion.save_upload(payload)
+    meta = ingestion.save_upload(payload)
+    # Upload success automatically starts the sequential pipeline (Profile ->
+    # Discover -> Plan -> Generate -> Execute -> Diagnose -> Improve loop). The
+    # pipeline is best-effort: it must never break the upload response, and any
+    # failure is recorded in the pipeline state for resume.
+    try:
+        pipeline_service.start_pipeline(meta.project_id)
+    except Exception:
+        pass
+    return meta
 
 
 @router.post("/from-path", response_model=ProjectMeta)
@@ -304,6 +315,129 @@ def _read_python_files(root: Path) -> list[tuple[str, str]]:
         except OSError:
             pass
     return files
+
+
+# ---------------------------------------------------------------------------
+# Autonomous pipeline endpoints
+# ---------------------------------------------------------------------------
+
+
+def _pipeline_gate_error(exc: pipeline_service.PipelineGateError) -> HTTPException:
+    return HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/{project_id}/pipeline/start", response_model=PipelineState)
+def pipeline_start(project_id: str):
+    """Start (or return the existing) sequential pipeline for a project.
+
+    AUTOMATIC stages (no user action needed): Profile, Discover, Plan,
+    Generate, Execute, Diagnose, and the bounded Improve->Execute->Diagnose
+    loop.
+
+    The pipeline advances only when each stage's persisted semantic success
+    predicate passes; a failed/blocked/unavailable stage stops it. Uploading a
+    project already auto-starts this pipeline, so calling start is normally
+    unnecessary. Repeated starts are idempotent and return the current state.
+    """
+    try:
+        return pipeline_service.start_pipeline(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.get("/{project_id}/pipeline", response_model=PipelineState)
+def pipeline_get(project_id: str):
+    """Return the current persisted pipeline state for a project."""
+    ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+    raw = ingestion.read_pipeline(config.WORKSPACE_DIR, project_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail="No pipeline state for this project.")
+    return PipelineState.model_validate_json(raw)
+
+
+@router.post("/{project_id}/pipeline/resume", response_model=PipelineState)
+def pipeline_resume(project_id: str):
+    """Resume the pipeline after a failed/unavailable stage.
+
+    Retries the failed/unavailable stage (e.g. Execute after Docker returns),
+    then continues the automatic chain. Safe no-op at human gates or terminal
+    states: those are never auto-crossed.
+    """
+    try:
+        return pipeline_service.resume_pipeline(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.post("/{project_id}/pipeline/retest", response_model=PipelineState)
+def pipeline_retest(project_id: str):
+    """Explicit USER DECISION: run the M9 re-test of improved tests.
+
+    Only permitted at `awaiting_retest_decision`. If the re-test proves the
+    improvements (fixed/passed) the pipeline completes; otherwise it proceeds
+    to the source-repair decision gate.
+    """
+    try:
+        return pipeline_service.decide_retest(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.post("/{project_id}/pipeline/skip-retest", response_model=PipelineState)
+def pipeline_skip_retest(project_id: str):
+    """Explicit USER DECISION: skip the M9 re-test and proceed to source-repair decision."""
+    try:
+        return pipeline_service.decide_skip_retest(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.post("/{project_id}/pipeline/repair", response_model=PipelineState)
+def pipeline_repair(project_id: str):
+    """Explicit USER DECISION: run bounded M11 source repair (M11).
+
+    Only permitted at `awaiting_repair_decision`. Original source is never
+    modified; a validated candidate stops at `awaiting_repair_approval`.
+    """
+    try:
+        return pipeline_service.decide_repair(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.post("/{project_id}/pipeline/skip-repair", response_model=PipelineState)
+def pipeline_skip_repair(project_id: str):
+    """Explicit USER DECISION: skip source repair; the pipeline completes."""
+    try:
+        return pipeline_service.decide_skip_repair(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.post("/{project_id}/pipeline/approve", response_model=PipelineState)
+def pipeline_approve(project_id: str):
+    """Explicit USER APPROVAL: apply the exact validated M11 candidate.
+
+    Only permitted at `awaiting_repair_approval`. Runs final validation after
+    applying; source is never modified without this approval.
+    """
+    try:
+        return pipeline_service.decide_approve(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
+
+
+@router.post("/{project_id}/pipeline/reject", response_model=PipelineState)
+def pipeline_reject(project_id: str):
+    """Explicit USER REJECTION of the M11 candidate.
+
+    Source remains unchanged; the pipeline records `approval rejected` and
+    stops. No alternative repair is applied automatically.
+    """
+    try:
+        return pipeline_service.decide_reject(project_id)
+    except pipeline_service.PipelineGateError as exc:
+        raise _pipeline_gate_error(exc)
 
 
 @router.get("/{project_id}", response_model=ProjectDetails)

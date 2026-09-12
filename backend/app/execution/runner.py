@@ -38,17 +38,46 @@ class DockerUnavailable(Exception):
 _PROGRESS_RE = re.compile(r"\s+\[\s*\d+%\]\s*$")
 
 
-def _docker_available() -> bool:
-    """Check if Docker CLI is accessible."""
+_docker_probe_detail = ""  # exact reason for the last probe failure (never hidden)
+
+
+def _docker_probe() -> tuple[bool, str]:
+    """Run one ``docker info`` probe. Returns (available, detail); never raises."""
     try:
         result = subprocess.run(
             ["docker", "info"],
             capture_output=True,
             timeout=10,
         )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+        if result.returncode == 0:
+            return True, ""
+        stderr = result.stderr.decode(errors="replace").strip()
+        return False, stderr or f"docker info exited {result.returncode}"
+    except FileNotFoundError:
+        return False, "docker command not found on PATH"
+    except subprocess.TimeoutExpired:
+        return False, "docker info timed out after 10s"
+
+
+def _docker_available(retries: int | None = None) -> bool:
+    """Check if the Docker CLI/daemon is accessible.
+
+    A single transient probe miss (Docker Desktop resuming, WSL engine
+    settling right after an image build / container teardown) must not hard-fail
+    an otherwise healthy host, so the probe is retried a bounded number of
+    times; it still fails closed when the daemon stays unreachable.
+    """
+    global _docker_probe_detail
+    retries = config.EXECUTION_DOCKER_PROBE_RETRIES if retries is None else retries
+    for attempt in range(retries + 1):
+        ok, detail = _docker_probe()
+        if ok:
+            _docker_probe_detail = ""
+            return True
+        _docker_probe_detail = detail
+        if attempt < retries:
+            time.sleep(config.EXECUTION_DOCKER_PROBE_RETRY_DELAY)
+    return False
 
 
 def _ensure_image(image: str) -> None:
@@ -184,7 +213,10 @@ def run_sandboxed_command(
     image = image or config.EXECUTION_IMAGE_NAME
 
     if not _docker_available():
-        raise DockerUnavailable("Docker is not available. Install and start Docker to evaluate.")
+        detail = f" Last probe: {_docker_probe_detail}" if _docker_probe_detail else ""
+        raise DockerUnavailable(
+            f"Docker is not available. Install and start Docker to evaluate.{detail}"
+        )
     try:
         _ensure_image(image)
     except DockerUnavailable:
@@ -204,6 +236,7 @@ def run_sandboxed_command(
         have_source = source_root is not None and source_root.is_dir()
         if have_source:
             shutil.copytree(source_root, source_dest, symlinks=False)
+            _mirror_module_names(source_dest)
 
         returncode, stdout, stderr, duration, timed_out = _docker_run(
             container_name=f"eval_{project_id}",
@@ -219,6 +252,40 @@ def run_sandboxed_command(
         return SandboxCommandResult(returncode, stdout, stderr, duration, timed_out)
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _mirror_module_names(src: Path) -> None:
+    """Add importable qualname aliases (in place) under `src`.
+
+    Improvement derives module names via ``improvement._module_from_path``,
+    which sanitises every path component (``m11-demo/calc.py`` ->
+    ``m11_demo.calc``). CPython's import machinery does NOT translate
+    directory/file names, so the verbatim source copy can't satisfy those
+    imports. This helper walks a snapshot of `src` and writes a twin tree in
+    which every component is replaced by its module-safe spelling, mirroring
+    exactly the rule used to build generated-test imports. Only aliases whose
+    sanitised name differs are created; existing paths are never overwritten.
+    """
+    original = sorted(src.rglob("*")) if src.is_dir() else []
+    for path in original:
+        raw_parts = list(path.relative_to(src).parts)
+        if path.is_file() and raw_parts[-1].endswith(".py"):
+            raw_parts = raw_parts[:-1] + [raw_parts[-1][:-3]]
+        sanitized = tuple(
+            ("_" + p if p[0].isdigit() else p)
+            for p in (re.sub(r"[^A-Za-z0-9_]", "_", p) for p in raw_parts)
+            if p
+        )
+        if path.is_file() and sanitized:
+            sanitized = sanitized[:-1] + (sanitized[-1] + ".py",)
+        target = Path(src, *sanitized)
+        if target == path or target.exists():
+            continue
+        if path.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
 
 
 def _parse_pytest_output(stdout: str) -> tuple[int, int, int, int, int]:
@@ -304,10 +371,14 @@ def execute_tests(
     image = image or config.EXECUTION_IMAGE_NAME
 
     if not _docker_available():
+        detail = f" Last probe: {_docker_probe_detail}" if _docker_probe_detail else ""
         return TestExecutionResult(
             project_id=project_id,
             overall_status=STATUS_UNAVAILABLE,
-            warnings=["Docker is not available. Install and start Docker to execute tests."],
+            warnings=[
+                "Docker is not available. Install and start Docker to execute tests."
+                + detail
+            ],
         )
 
     try:
@@ -342,6 +413,7 @@ def execute_tests(
         have_source = source_root.is_dir()
         if have_source:
             shutil.copytree(source_root, source_dest, symlinks=False)
+            _mirror_module_names(source_dest)
 
         returncode, stdout, stderr, duration, timed_out = _docker_run(
             container_name=f"exec_{project_id}",

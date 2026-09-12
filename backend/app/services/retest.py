@@ -111,6 +111,37 @@ def _build_baseline_function_map(
     return result
 
 
+def _select_user_behavioral_tests(
+    diagnosis: DiagnosisResult | None,
+    copied_user_tests: list[str] | None,
+) -> list[ReTestSelection]:
+    """Select discovered user behavioral tests that failed at baseline (M7).
+
+    These tests are not M8-improved (M8 only rewrites scaffold placeholders),
+    so the M9 selection must include them explicitly or their still-failing
+    verdicts never reach M11. The copied `user_*` names in generated_tests/ are
+    what diagnosis recorded as `test_file`.
+    """
+    if diagnosis is None or not copied_user_tests:
+        return []
+    user_files = set(copied_user_tests)
+    selected: list[ReTestSelection] = []
+    seen: set[tuple[str, str]] = set()
+    for finding in diagnosis.findings:
+        if finding.test_file not in user_files:
+            continue
+        key = (finding.test_file, finding.test_function)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(ReTestSelection(
+            test_file=finding.test_file,
+            test_function=finding.test_function,
+            improvement_status="user_behavioral",
+        ))
+    return selected
+
+
 def _derive_file_retest_status(
     retest_result: TestExecutionResult,
     test_file: str,
@@ -187,18 +218,26 @@ def retest_from_artifacts(
     prev_execution: TestExecutionResult | None,
     gen_root: Path | None = None,
     project_id: str = "",
+    copied_user_tests: list[str] | None = None,
+    source_root: Path | None = None,
 ) -> ReTestResult:
     """Core deterministic re-test logic.
 
-    1. Select improved tests from ImprovementResult.
+    1. Select improved tests from ImprovementResult plus discovered user
+       behavioral tests that failed at baseline.
     2. If nothing to re-test, return no_op/blocked.
     3. Re-execute the improved generated tests via M6 runner.
     4. Compare re-test against baseline and derive verdicts.
     """
     ws_root = gen_root if gen_root is not None else config.WORKSPACE_DIR
 
+    user_selected = _select_user_behavioral_tests(diagnosis, copied_user_tests)
+
     # --- Fast-path: nothing to re-test ---
-    if improvement.status in (IMPROVE_NO_CHANGE, IMPROVE_BLOCKED):
+    # The NO_CHANGE/BLOCKED fast-path only holds when there is also no failing
+    # user behavioral test to re-verify — a merged user test that is still
+    # failing must surface as `still_failing` so M11 can target it.
+    if improvement.status in (IMPROVE_NO_CHANGE, IMPROVE_BLOCKED) and not user_selected:
         reasons = []
         if improvement.status == IMPROVE_NO_CHANGE:
             reasons.append("M8 produced no changes — nothing to re-test.")
@@ -220,7 +259,7 @@ def retest_from_artifacts(
 
     # --- Select tests actually changed by M8 ---
     selected = _select_improved_tests(improvement)
-    if not selected:
+    if not selected and not user_selected:
         return ReTestResult(
             project_id=project_id,
             status=RETEST_NO_OP,
@@ -234,6 +273,17 @@ def retest_from_artifacts(
             reasons=["M8 produced no changes with status 'improved' — nothing to re-test."],
             created_at=_now(),
         )
+
+    # Combine improved + user selections without duplicating a (file, func).
+    seen_keys: set[tuple[str, str]] = set()
+    combined: list[ReTestSelection] = []
+    for sel in [*selected, *user_selected]:
+        key = (sel.test_file, sel.test_function)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        combined.append(sel)
+    selected = combined
 
     # --- Baseline completeness gate ---
     # Per spec: missing diagnosis or missing previous execution = blocked.
@@ -284,7 +334,13 @@ def retest_from_artifacts(
     # --- Execute the generated tests via M6 runner ---
     from app.execution.runner import execute_tests
 
-    retest_exec = execute_tests(gt_root, project_id)
+    # Re-run the SAME suite M6 ran, so user behavioral tests that import their
+    # project (e.g. `from calc import add`) resolve identically. Omitting the
+    # source mount here would make those files fail at collection, erasing the
+    # verdict this stage exists to produce.
+    if source_root is None:
+        source_root = Path(ws_root) / project_id / "source"
+    retest_exec = execute_tests(gt_root, project_id, source_root=source_root)
 
     if retest_exec.overall_status == STATUS_UNAVAILABLE:
         return ReTestResult(
@@ -422,9 +478,21 @@ def retest_project(
     if raw_exec is not None:
         prev_execution = TestExecutionResult.model_validate_json(raw_exec)
 
+    # --- Read merged user test names (copied into the executed suite at M5) ---
+    copied_user_tests = None
+    raw_gen = ingestion.read_test_generation(ws, project_id)
+    if raw_gen is not None:
+        from app.models.test_generation import TestGenerationResult
+
+        copied_user_tests = (
+            TestGenerationResult.model_validate_json(raw_gen).merged_user_files or []
+        )
+
     result = retest_from_artifacts(
         improvement, diagnosis, prev_execution,
         gen_root=ws, project_id=project_id,
+        copied_user_tests=copied_user_tests,
+        source_root=Path(ws) / project_id / "source",
     )
 
     ingestion.save_retest(ws, result.model_dump_json())

@@ -86,6 +86,7 @@ class RepairCandidate(BaseModel):
     rationale: str = ""
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     attempt_number: int = 0
+    target_function: str = ""  # bare source function name this candidate repairs
 
 
 class RepairAttempt(BaseModel):

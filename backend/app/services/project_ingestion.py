@@ -231,6 +231,22 @@ def read_retest(workspace: Path, project_id: str) -> str | None:
     return retest_path.read_text(encoding="utf-8")
 
 
+def save_pipeline(workspace: Path, pipeline_json: str) -> None:
+    """Persist pipeline state under .meta/pipeline.json."""
+    pid = json.loads(pipeline_json)["project_id"]
+    meta_path = project_dir(workspace, pid) / _META_DIR / "pipeline.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(pipeline_json, encoding="utf-8")
+
+
+def read_pipeline(workspace: Path, project_id: str) -> str | None:
+    """Read persisted pipeline state. Returns None if not found."""
+    pipeline_path = project_dir(workspace, project_id) / _META_DIR / "pipeline.json"
+    if not pipeline_path.is_file():
+        return None
+    return pipeline_path.read_text(encoding="utf-8")
+
+
 def save_evaluation(workspace: Path, evaluation_json: str) -> None:
     """Persist evaluation results under .meta/evaluation.json."""
     pid = json.loads(evaluation_json)["project_id"]

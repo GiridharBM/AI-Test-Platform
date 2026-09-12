@@ -163,6 +163,22 @@ def _exec_result(overall: str, failed: int) -> TestExecutionResult:
     )
 
 
+def _suite_result(statuses: dict[str, str]) -> TestExecutionResult:
+    """A TestExecutionResult with pytest -v stdout carrying per-test statuses."""
+    lines = "\n".join(f"test_calc.py::{name} {status.upper()}" for name, status in statuses.items())
+    failed = sum(1 for s in statuses.values() if s != "passed")
+    passed = len(statuses) - failed
+    overall = "passed" if failed == 0 else "failed"
+    return TestExecutionResult(
+        project_id="proj",
+        overall_status=overall,
+        exit_code=0 if failed == 0 else 1,
+        stdout=lines + "\n",
+        summary=ExecutionSummary(total_files=1, passed=passed, failed=failed, total_test_functions=len(statuses)),
+        file_results=[TestFileResult(file_path="test_calc.py", status=overall)],
+    )
+
+
 class TestRepairEndpoint:
     def test_project_not_found_returns_404(self):
         resp = client.post("/api/projects/nonexistent/repair")
@@ -186,12 +202,19 @@ class TestRepairEndpoint:
         _write_test_plan(pid)
         _write_diagnosis(pid)
         _write_retest(pid, ["test_add_basic"])
-        with patch("app.execution.runner.execute_tests", return_value=_exec_result("passed", 0)):
+        with patch(
+            "app.execution.runner.execute_tests",
+            side_effect=[
+                _suite_result({"test_add_basic": "failed"}),
+                _suite_result({"test_add_basic": "passed"}),
+            ],
+        ):
             resp = client.post(f"/api/projects/{pid}/repair")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "validated_pending_approval"
         assert body["selected_candidate"]["after"] == "return a + b"
+        assert body["selected_candidate"]["target_function"] == "add"
         assert body["application_state"] == "not_applied"
 
     def test_blocked_when_no_still_failing(self, tmp_path):
@@ -216,7 +239,13 @@ class TestRepairEndpoint:
         _write_codemap(pid)
         _write_diagnosis(pid)
         _write_retest(pid, ["test_add_basic"])
-        with patch("app.execution.runner.execute_tests", return_value=_exec_result("passed", 0)):
+        with patch(
+            "app.execution.runner.execute_tests",
+            side_effect=[
+                _suite_result({"test_add_basic": "failed"}),
+                _suite_result({"test_add_basic": "passed"}),
+            ],
+        ):
             client.post(f"/api/projects/{pid}/repair")
         assert src_f.read_text(encoding="utf-8") == "def add(a, b):\n    return a - b\n"
 
@@ -237,7 +266,13 @@ class TestRepairApproveEndpoint:
         _write_test_plan(pid)
         _write_diagnosis(pid)
         _write_retest(pid, ["test_add_basic"])
-        with patch("app.execution.runner.execute_tests", return_value=_exec_result("passed", 0)):
+        with patch(
+            "app.execution.runner.execute_tests",
+            side_effect=[
+                _suite_result({"test_add_basic": "failed"}),
+                _suite_result({"test_add_basic": "passed"}),
+            ],
+        ):
             resp_repair = client.post(f"/api/projects/{pid}/repair")
         assert resp_repair.status_code == 200
         with patch("app.execution.runner.execute_tests", return_value=_exec_result("passed", 0)):
@@ -259,7 +294,13 @@ class TestGetProjectRepair:
         _write_codemap(pid)
         _write_diagnosis(pid)
         _write_retest(pid, ["test_add_basic"])
-        with patch("app.execution.runner.execute_tests", return_value=_exec_result("passed", 0)):
+        with patch(
+            "app.execution.runner.execute_tests",
+            side_effect=[
+                _suite_result({"test_add_basic": "failed"}),
+                _suite_result({"test_add_basic": "passed"}),
+            ],
+        ):
             client.post(f"/api/projects/{pid}/repair")
         resp = client.get(f"/api/projects/{pid}")
         assert resp.status_code == 200

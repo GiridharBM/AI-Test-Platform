@@ -53,7 +53,7 @@ def discover_project(
     for path in py_files:
         rel = path.relative_to(root).as_posix()
         try:
-            content = path.read_text(encoding="utf-8", errors="replace")
+            content = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError as exc:
             warnings.append(f"Could not read {rel}: {exc}")
             continue
