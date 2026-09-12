@@ -416,6 +416,10 @@ class TestRepairLoop:
         assert result.selected_candidate.attempt_number == 1
         assert len(result.attempts) == 1
         assert result.attempts[0].validation_status == "passed"
+        # the candidate-validation acceptance baseline is persisted for reuse by
+        # final validation (same justified boundary)
+        assert result.baseline_statuses == {"test_add_basic": "failed"}
+        assert result.target_test_functions == ["test_add_basic"]
         # baseline run + one candidate validation run
         assert mock.call_count == 2
         # Original source untouched.
@@ -639,7 +643,8 @@ class TestUserBehavioralTargetResolution:
 
 
 class TestApproval:
-    def _write_repair_result(self, workspace: Path, project_id: str, owner=None):
+    def _write_repair_result(self, workspace: Path, project_id: str, owner=None,
+                             baseline_statuses=None, target_test_functions=None):
         from app.models.repair import RepairResult
         from app.services import project_ingestion as ingestion
 
@@ -665,6 +670,8 @@ class TestApproval:
             selected_candidate=cand,
             approval_state="pending",
             application_state="not_applied",
+            baseline_statuses=dict(baseline_statuses or {}),
+            target_test_functions=list(target_test_functions or []),
             created_at=_now(),
         )
         ingestion.save_repair(workspace, result.model_dump_json())
@@ -803,3 +810,127 @@ class TestApproval:
             approved = approve_repair("proj", workspace=workspace)
         assert approved.status == "applied"
         assert approved.final_validation.status == "failed"
+
+    # --- Final-validation acceptance boundary (frozen M11 regression tests) ---
+
+    def test_final_validation_allows_pre_existing_scaffold_failures(self, tmp_path):
+        """Requirement 12: baseline user behavioural test FAILS and generated
+        scaffold tests FAIL; candidate resolves the behavioural test with no
+        regressions; final validation must report SUCCESS even though the SAME
+        pre-existing generated failures remain after apply."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        src_f = self._source(workspace, "proj")
+        self._gt(workspace, "proj")
+        self._write_repair_result(
+            workspace, "proj",
+            baseline_statuses={
+                "test_add_returns_sum": "failed",
+                "test_add_success": "failed",
+                "test_add_edge_a_none": "failed",
+                "test_add_edge_b_none": "failed",
+            },
+            target_test_functions=["test_add_returns_sum"],
+        )
+        final = _suite_result({
+            "test_add_returns_sum": "passed",
+            "test_add_success": "failed",
+            "test_add_edge_a_none": "failed",
+            "test_add_edge_b_none": "failed",
+        })
+        with patch("app.execution.runner.execute_tests", return_value=final):
+            approved = approve_repair("proj", workspace=workspace)
+        assert approved.status == "applied"
+        assert approved.application_state == "applied"
+        assert approved.final_validation.status == "passed"
+        assert "pre-existing failure" in approved.final_validation.reason
+        # the approved candidate was actually applied
+        assert src_f.read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+
+    def test_final_validation_rejects_regression(self, tmp_path):
+        """Requirement 13: a previously-passing test that becomes failing after
+        apply must fail final validation."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        src_f = self._source(workspace, "proj")
+        self._gt(workspace, "proj")
+        self._write_repair_result(
+            workspace, "proj",
+            baseline_statuses={
+                "test_add_returns_sum": "failed",
+                "test_helper_passes": "passed",
+            },
+            target_test_functions=["test_add_returns_sum"],
+        )
+        final = _suite_result({
+            "test_add_returns_sum": "passed",
+            "test_helper_passes": "failed",
+        })
+        with patch("app.execution.runner.execute_tests", return_value=final):
+            approved = approve_repair("proj", workspace=workspace)
+        assert approved.status == "applied"
+        assert approved.final_validation.status == "failed"
+        assert "regression" in approved.final_validation.reason
+        assert "test_helper_passes" in approved.final_validation.reason
+        # candidate applied (final failure does not roll back the explicit approval)
+        assert src_f.read_text(encoding="utf-8") == "def add(a, b):\n    return a + b\n"
+
+    def test_final_validation_rejects_unresolved_target(self, tmp_path):
+        """Requirement 14: if the target behavioural test is STILL failing after
+        approval, final validation fails."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        self._source(workspace, "proj")
+        self._gt(workspace, "proj")
+        self._write_repair_result(
+            workspace, "proj",
+            baseline_statuses={"test_add_returns_sum": "failed"},
+            target_test_functions=["test_add_returns_sum"],
+        )
+        final = _suite_result({"test_add_returns_sum": "failed"})
+        with patch("app.execution.runner.execute_tests", return_value=final):
+            approved = approve_repair("proj", workspace=workspace)
+        assert approved.status == "applied"
+        assert approved.final_validation.status == "failed"
+        assert "transition" in approved.final_validation.reason
+
+    def test_final_validation_fail_closed_when_unavailable(self, tmp_path):
+        """Requirement 15: Docker unavailable stays a distinct fail-closed status."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        self._source(workspace, "proj")
+        self._gt(workspace, "proj")
+        self._write_repair_result(
+            workspace, "proj",
+            baseline_statuses={"test_add_returns_sum": "failed"},
+            target_test_functions=["test_add_returns_sum"],
+        )
+        run = TestExecutionResult(
+            project_id="proj", overall_status="unavailable", exit_code=-1,
+            summary=ExecutionSummary(total_files=0),
+        )
+        with patch("app.execution.runner.execute_tests", return_value=run):
+            approved = approve_repair("proj", workspace=workspace)
+        assert approved.status == "applied"
+        assert approved.final_validation.status == "unavailable"
+
+    def test_final_validation_fail_closed_when_timeout(self, tmp_path):
+        """Requirement 15: a timed-out/errored final run fails closed."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        self._source(workspace, "proj")
+        self._gt(workspace, "proj")
+        self._write_repair_result(
+            workspace, "proj",
+            baseline_statuses={"test_add_returns_sum": "failed"},
+            target_test_functions=["test_add_returns_sum"],
+        )
+        run = TestExecutionResult(
+            project_id="proj", overall_status="timeout", exit_code=-1,
+            summary=ExecutionSummary(total_files=0),
+        )
+        with patch("app.execution.runner.execute_tests", return_value=run):
+            approved = approve_repair("proj", workspace=workspace)
+        assert approved.status == "applied"
+        assert approved.final_validation.status == "failed"
+        assert "closed" in approved.final_validation.reason

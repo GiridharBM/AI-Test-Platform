@@ -799,6 +799,8 @@ def repair_from_artifacts(
                 selected_candidate=cand_for_result,
                 approval_state=APPROVAL_PENDING,
                 application_state=APPLICATION_NOT_APPLIED,
+                baseline_statuses=dict(baseline_statuses),
+                target_test_functions=sorted(target_funcs),
                 warnings=warnings,
                 reasons=reasons,
                 created_at=_now(),
@@ -1012,27 +1014,88 @@ def approve_repair(
             reason="Docker unavailable; final validation could not run.",
         )
         result.reasons.append("Candidate applied but final validation is unavailable.")
-    elif (
-        final_exec.overall_status == STATUS_PASSED
-        and final_exec.summary.failed == 0
-        and final_exec.summary.errors == 0
-    ):
-        result.final_validation = FinalValidation(
-            status=FINAL_VALIDATION_PASSED,
-            execution_result=final_exec.model_dump(),
-            reason="Final validation passed against applied source.",
-        )
-        result.reasons.append("Candidate applied and final validation passed.")
+    elif not result.baseline_statuses:
+        # Legacy/migration repair result with no persisted acceptance baseline:
+        # the strict all-suite-pass gate is the only verifiable boundary.
+        if (
+            final_exec.overall_status == STATUS_PASSED
+            and final_exec.summary.failed == 0
+            and final_exec.summary.errors == 0
+        ):
+            result.final_validation = FinalValidation(
+                status=FINAL_VALIDATION_PASSED,
+                execution_result=final_exec.model_dump(),
+                reason="Final validation passed against applied source.",
+            )
+            result.reasons.append("Candidate applied and final validation passed.")
+        else:
+            result.final_validation = FinalValidation(
+                status=FINAL_VALIDATION_FAILED,
+                execution_result=final_exec.model_dump(),
+                reason=(
+                    f"Final validation failed: overall={final_exec.overall_status}, "
+                    f"failed={final_exec.summary.failed}, errors={final_exec.summary.errors}."
+                ),
+            )
+            result.reasons.append("Candidate applied but final validation failed.")
     else:
+        # Same justified acceptance boundary as candidate validation: the
+        # target-linked behavioural failure must now pass and no previously-
+        # passing test may regress. Unrelated pre-existing failures (e.g.
+        # generated scaffold placeholders) present at baseline are tolerated.
+        final_statuses = _parse_test_statuses(final_exec)
+        baseline = dict(result.baseline_statuses)
+        target_tests = set(result.target_test_functions)
+        run_unusable = final_exec.overall_status in (STATUS_TIMEOUT, STATUS_ERROR)
+        resolved = _has_target_transition(baseline, final_statuses, target_tests)
+        regressions = _find_regressions(baseline, final_statuses)
+
+        if run_unusable:
+            reason = (
+                f"Final validation could not be verified (overall={final_exec.overall_status}); "
+                "repair applied but validation fails closed."
+            )
+            status = FINAL_VALIDATION_FAILED
+        elif not resolved and regressions:
+            reason = (
+                f"Final validation failed: target behavioural failure(s) not resolved and "
+                f"{len(regressions)} regression(s) in previously-passing tests: "
+                f"{', '.join(regressions)}."
+            )
+            status = FINAL_VALIDATION_FAILED
+        elif not resolved:
+            reason = (
+                "Final validation failed: the repaired target's behavioural test(s) "
+                "did not transition from failing to passing against the applied source."
+            )
+            status = FINAL_VALIDATION_FAILED
+        elif regressions:
+            reason = (
+                f"Final validation failed: {len(regressions)} regression(s) in "
+                f"previously-passing tests: {', '.join(regressions)}."
+            )
+            status = FINAL_VALIDATION_FAILED
+        else:
+            pre_existing = sum(
+                1 for test, st in baseline.items()
+                if st != STATUS_PASSED and final_statuses.get(test) != STATUS_PASSED
+            )
+            reason = (
+                "Final validation passed against applied source: target behavioural "
+                f"failure resolved and no regressions introduced "
+                f"({pre_existing} pre-existing failure(s) tolerated)."
+            )
+            status = FINAL_VALIDATION_PASSED
+
         result.final_validation = FinalValidation(
-            status=FINAL_VALIDATION_FAILED,
+            status=status,
             execution_result=final_exec.model_dump(),
-            reason=(
-                f"Final validation failed: overall={final_exec.overall_status}, "
-                f"failed={final_exec.summary.failed}, errors={final_exec.summary.errors}."
-            ),
+            reason=reason,
         )
-        result.reasons.append("Candidate applied but final validation failed.")
+        result.reasons.append(
+            "Candidate applied and final validation "
+            f"{'passed' if status == FINAL_VALIDATION_PASSED else 'failed'}."
+        )
 
     ingestion.save_repair(ws, result.model_dump_json())
     return result

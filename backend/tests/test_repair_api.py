@@ -275,7 +275,7 @@ class TestRepairApproveEndpoint:
         ):
             resp_repair = client.post(f"/api/projects/{pid}/repair")
         assert resp_repair.status_code == 200
-        with patch("app.execution.runner.execute_tests", return_value=_exec_result("passed", 0)):
+        with patch("app.execution.runner.execute_tests", return_value=_suite_result({"test_add_basic": "passed"})):
             resp = client.post(f"/api/projects/{pid}/repair/approve")
         assert resp.status_code == 200
         body = resp.json()

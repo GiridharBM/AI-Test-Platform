@@ -218,8 +218,23 @@ def retest_project(project_id: str):
 
     Verifies whether the M8 improvement changes fixed the diagnosed failures.
     Requires an improvement result (run /improve first).
+
+    Orchestrator-aware: when the project has pipeline state this is the
+    ``awaiting_retest_decision`` gate action. It runs the identical re-test
+    business logic via the pipeline (enforcing the gate and advancing the
+    state machine, e.g. ``still_failing`` -> ``awaiting_repair_decision``)
+    and returns the resulting PipelineState. Without pipeline state the
+    legacy standalone M9 behaviour is unchanged.
     """
     ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_pipeline(config.WORKSPACE_DIR, project_id) is not None:
+        from app.services import pipeline as pipeline_service
+
+        try:
+            return pipeline_service.decide_retest(project_id)
+        except pipeline_service.PipelineGateError as exc:
+            raise _pipeline_gate_error(exc)
 
     if ingestion.read_improvement(config.WORKSPACE_DIR, project_id) is None:
         raise HTTPException(
@@ -258,8 +273,24 @@ def repair_project(project_id: str):
     (or after REPAIR_MAX_ATTEMPTS). NEVER modifies the original source here;
     a passing candidate is returned as `validated_pending_approval` awaiting
     explicit human approval via /approve.
+
+    Orchestrator-aware: when the project has pipeline state this is the
+    ``awaiting_repair_decision`` gate action. It runs the identical bounded
+    repair business logic via the pipeline (enforcing the gate and advancing
+    the state machine; a validated candidate stops at
+    ``awaiting_repair_approval`` for explicit approval) and returns the
+    resulting PipelineState. Without pipeline state the legacy standalone
+    M11 behaviour is unchanged.
     """
     ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_pipeline(config.WORKSPACE_DIR, project_id) is not None:
+        from app.services import pipeline as pipeline_service
+
+        try:
+            return pipeline_service.decide_repair(project_id)
+        except pipeline_service.PipelineGateError as exc:
+            raise _pipeline_gate_error(exc)
 
     if ingestion.read_retest(config.WORKSPACE_DIR, project_id) is None:
         raise HTTPException(
@@ -281,8 +312,22 @@ def repair_approve(project_id: str):
     original source still matches the candidate's expected `before` content.
     Runs final validation against the applied source. Refuses to overwrite
     newer user changes.
+
+    Orchestrator-aware: when the project has pipeline state this is the
+    ``awaiting_repair_approval`` human action. It runs the identical
+    approval business logic via the pipeline (enforcing the gate and advancing
+    the state machine) and returns the resulting PipelineState. Without
+    pipeline state the legacy standalone M11 behaviour is unchanged.
     """
     ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+
+    if ingestion.read_pipeline(config.WORKSPACE_DIR, project_id) is not None:
+        from app.services import pipeline as pipeline_service
+
+        try:
+            return pipeline_service.decide_approve(project_id)
+        except pipeline_service.PipelineGateError as exc:
+            raise _pipeline_gate_error(exc)
 
     if ingestion.read_repair(config.WORKSPACE_DIR, project_id) is None:
         raise HTTPException(

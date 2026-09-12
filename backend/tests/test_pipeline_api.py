@@ -13,7 +13,7 @@ from app.models.repair import (
     FinalValidation,
     RepairResult,
 )
-from app.models.retest import RETEST_STILL_FAILING, ReTestResult
+from app.models.retest import RETEST_PASSED, RETEST_STILL_FAILING, ReTestResult
 from app.services import pipeline as pl
 
 
@@ -187,3 +187,195 @@ def test_resume_endpoint_noop_at_gate(client, tmp_path, monkeypatch):
     client.post(f"/api/projects/{pid}/pipeline/start")
     state = client.post(f"/api/projects/{pid}/pipeline/resume").json()
     assert state["current_stage"] == "awaiting_retest_decision"
+
+
+# ---------------------------------------------------------------------------
+# Standalone /retest endpoint orchestrator integration (bug regression)
+# ---------------------------------------------------------------------------
+
+def test_standalone_retest_advances_orchestrator_to_repair_gate(client, tmp_path, monkeypatch):
+    """POST /{pid}/retest with pipeline at awaiting_retest_decision advances
+    to awaiting_repair_decision when the re-test proves still_failing.
+
+    Regression for the live-end-to-end orchestration bug: the standalone
+    retest endpoint did not transition the pipeline state machine.
+    """
+    _patch_auto(monkeypatch)
+    pid = _register_from_path(client, tmp_path)
+    state = client.post(f"/api/projects/{pid}/pipeline/start").json()
+    assert state["current_stage"] == "awaiting_retest_decision"
+    assert state["available_actions"] == ["retest", "skip_retest"]
+
+    _patch(monkeypatch, "retest", pl.STAGE_SUCCESS,
+           artifact=("retest", _retest_json(RETEST_STILL_FAILING)))
+    resp = client.post(f"/api/projects/{pid}/retest")
+    assert resp.status_code == 200
+    state = resp.json()
+    assert state["current_stage"] == "awaiting_repair_decision"
+    assert state["available_actions"] == ["repair", "skip_repair"]
+    assert state["overall_status"] == "waiting_for_user"
+    retest_entries = [h for h in state["stage_history"] if h["stage"] == "retest"]
+    assert len(retest_entries) == 1
+
+
+def test_standalone_retest_passed_completes(client, tmp_path, monkeypatch):
+    """POST /{pid}/retest with pipeline at gate and re-test passed/fixed
+    completes the pipeline. Covers requirement 4 (passed-retest path).
+    """
+    _patch_auto(monkeypatch)
+    pid = _register_from_path(client, tmp_path)
+    client.post(f"/api/projects/{pid}/pipeline/start")
+
+    _patch(monkeypatch, "retest", pl.STAGE_SUCCESS,
+           artifact=("retest", _retest_json(RETEST_PASSED)))
+    resp = client.post(f"/api/projects/{pid}/retest")
+    assert resp.status_code == 200
+    state = resp.json()
+    assert state["current_stage"] == "completed"
+    assert state["overall_status"] == "completed"
+
+
+def test_standalone_retest_gate_enforced_on_second_call(client, tmp_path, monkeypatch):
+    """A second POST /{pid}/retest after advancing is rejected (409).
+    Gate enforcement prevents double-retest and out-of-order bypass.
+    """
+    _patch_auto(monkeypatch)
+    pid = _register_from_path(client, tmp_path)
+    client.post(f"/api/projects/{pid}/pipeline/start")
+    _patch(monkeypatch, "retest", pl.STAGE_SUCCESS,
+           artifact=("retest", _retest_json(RETEST_STILL_FAILING)))
+    state = client.post(f"/api/projects/{pid}/retest").json()
+    assert state["current_stage"] == "awaiting_repair_decision"
+    resp = client.post(f"/api/projects/{pid}/retest")
+    assert resp.status_code == 409
+    assert "awaiting_retest_decision" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Standalone /repair and /repair/approve endpoint orchestrator integration
+# (mirror of the retest gate fix)
+# ---------------------------------------------------------------------------
+
+def _to_repair_decision_gate(client, tmp_path, monkeypatch):
+    """Advance a from-path project to awaiting_repair_decision."""
+    _patch_auto(monkeypatch)
+    pid = _register_from_path(client, tmp_path)
+    client.post(f"/api/projects/{pid}/pipeline/start")
+    _patch(monkeypatch, "retest", pl.STAGE_SUCCESS,
+           artifact=("retest", _retest_json(RETEST_STILL_FAILING)))
+    client.post(f"/api/projects/{pid}/pipeline/retest")
+    return pid
+
+
+def test_standalone_repair_advances_to_approval_gate(client, tmp_path, monkeypatch):
+    """A: awaiting_repair_decision -> POST /repair -> validated candidate
+    -> awaiting_repair_approval with approve/reject actions available.
+    """
+    pid = _to_repair_decision_gate(client, tmp_path, monkeypatch)
+    _patch(monkeypatch, "repair", pl.STAGE_SUCCESS,
+           artifact=("repair", _repair_json(REPAIR_VALIDATED_PENDING_APPROVAL, "not_run")))
+    resp = client.post(f"/api/projects/{pid}/repair")
+    assert resp.status_code == 200
+    state = resp.json()
+    assert state["current_stage"] == "awaiting_repair_approval"
+    assert state["available_actions"] == ["approve", "reject"]
+    assert state["overall_status"] == "waiting_for_approval"
+    assert len([h for h in state["stage_history"] if h["stage"] == "repair"]) == 1
+
+
+def test_standalone_repair_gate_enforced_on_second_call(client, tmp_path, monkeypatch):
+    """B: a second POST /{pid}/repair after leaving awaiting_repair_decision
+    is a 409 conflict, not another repair run.
+    """
+    pid = _to_repair_decision_gate(client, tmp_path, monkeypatch)
+    calls = {"n": 0}
+    monkeypatch.setitem(pl._EXEC, "repair",
+                        lambda ws, pd: calls.update(n=calls["n"] + 1)
+                        or (pl.STAGE_SUCCESS, "id", "repair", []))
+    state = client.post(f"/api/projects/{pid}/repair").json()
+    assert state["current_stage"] == "awaiting_repair_approval"
+    resp = client.post(f"/api/projects/{pid}/repair")
+    assert resp.status_code == 409
+    assert "awaiting_repair_decision" in resp.json()["detail"]
+    assert calls["n"] == 1
+
+
+def test_standalone_repair_approve_completes(client, tmp_path, monkeypatch):
+    """C: awaiting_repair_approval -> POST /repair/approve -> final
+    validation passes -> pipeline completed.
+    """
+    pid = _to_repair_decision_gate(client, tmp_path, monkeypatch)
+    _patch(monkeypatch, "repair", pl.STAGE_SUCCESS,
+           artifact=("repair", _repair_json(REPAIR_VALIDATED_PENDING_APPROVAL, "not_run")))
+    client.post(f"/api/projects/{pid}/repair")
+    _patch(monkeypatch, "approve", pl.STAGE_APPROVED,
+           artifact=("repair", _repair_json(REPAIR_APPLIED, FINAL_VALIDATION_PASSED)))
+    resp = client.post(f"/api/projects/{pid}/repair/approve")
+    assert resp.status_code == 200
+    state = resp.json()
+    assert state["current_stage"] == "completed"
+    assert state["overall_status"] == "completed"
+    assert [h["stage"] for h in state["stage_history"]][-1] == "approve"
+
+
+def test_standalone_repair_approve_gate_enforced(client, tmp_path, monkeypatch):
+    """D: a second POST /repair/approve after the candidate is applied and
+    the pipeline completed is a 409 conflict.
+    """
+    pid = _to_repair_decision_gate(client, tmp_path, monkeypatch)
+    _patch(monkeypatch, "repair", pl.STAGE_SUCCESS,
+           artifact=("repair", _repair_json(REPAIR_VALIDATED_PENDING_APPROVAL, "not_run")))
+    client.post(f"/api/projects/{pid}/repair")
+    _patch(monkeypatch, "approve", pl.STAGE_APPROVED,
+           artifact=("repair", _repair_json(REPAIR_APPLIED, FINAL_VALIDATION_PASSED)))
+    state = client.post(f"/api/projects/{pid}/repair/approve").json()
+    assert state["overall_status"] == "completed"
+    resp = client.post(f"/api/projects/{pid}/repair/approve")
+    assert resp.status_code == 409
+    assert "awaiting_repair_approval" in resp.json()["detail"]
+
+
+def test_no_auto_repair_at_decision_gate(client, tmp_path, monkeypatch):
+    """E: reaching awaiting_repair_decision never auto-runs repair (resume
+    is a no-op; the human must call /repair explicitly).
+    """
+    pid = _to_repair_decision_gate(client, tmp_path, monkeypatch)
+    calls = {"n": 0}
+    monkeypatch.setitem(pl._EXEC, "repair",
+                        lambda ws, pd: calls.update(n=calls["n"] + 1)
+                        or (pl.STAGE_FAILED, "", "", []))
+    state = client.post(f"/api/projects/{pid}/pipeline/resume").json()
+    assert state["current_stage"] == "awaiting_repair_decision"
+    assert state["available_actions"] == ["repair", "skip_repair"]
+    assert calls["n"] == 0
+
+
+def test_no_auto_approval_at_approval_gate(client, tmp_path, monkeypatch):
+    """F: reaching awaiting_repair_approval never auto-approves (resume is a
+    no-op; the candidate is applied only by an explicit /repair/approve).
+    """
+    pid = _to_repair_decision_gate(client, tmp_path, monkeypatch)
+    _patch(monkeypatch, "repair", pl.STAGE_SUCCESS,
+           artifact=("repair", _repair_json(REPAIR_VALIDATED_PENDING_APPROVAL, "not_run")))
+    client.post(f"/api/projects/{pid}/repair")
+    calls = {"n": 0}
+    monkeypatch.setitem(pl._EXEC, "approve",
+                        lambda ws, pd: calls.update(n=calls["n"] + 1)
+                        or (pl.STAGE_APPROVED, "", "", []))
+    state = client.post(f"/api/projects/{pid}/pipeline/resume").json()
+    assert state["current_stage"] == "awaiting_repair_approval"
+    assert state["overall_status"] == "waiting_for_approval"
+    assert state["available_actions"] == ["approve", "reject"]
+    assert calls["n"] == 0
+
+
+def test_standalone_repair_legacy_no_pipeline_unchanged(client, tmp_path):
+    """G: without pipeline state, /repair and /repair/approve keep the
+    legacy standalone guards (422 for missing artifacts), NOT a gate 409.
+    """
+    pid = _register_from_path(client, tmp_path)
+    resp = client.post(f"/api/projects/{pid}/repair")
+    assert resp.status_code == 422
+    assert "re-test" in resp.json()["detail"].lower()
+    resp2 = client.post(f"/api/projects/{pid}/repair/approve")
+    assert resp2.status_code == 422

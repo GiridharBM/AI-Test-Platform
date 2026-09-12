@@ -91,5 +91,25 @@ def test_upload_files_saved_to_workspace(client):
     pid = res.json()["project_id"]
     from app.core import config
     src = config.WORKSPACE_DIR / pid / "source"
+    # A shared leading directory component is a browser upload wrapper, not
+    # part of the module namespace: the sandbox import root is /source, so
+    # the files must land directly at the source root (not under `src/`).
+    assert (src / "a.py").is_file()
+    assert (src / "b.py").read_bytes() == b"print(2)"
+    assert not (src / "src").exists()
+
+
+def test_upload_unshared_prefix_layout_preserved(client):
+    """Files that do not share a single leading component keep exact layout."""
+    res = client.post(
+        "/api/projects/upload",
+        files=[
+            ("files", ("src/a.py", b"print(1)")),
+            ("files", ("tests/test_b.py", b"assert True")),
+        ],
+    )
+    pid = res.json()["project_id"]
+    from app.core import config
+    src = config.WORKSPACE_DIR / pid / "source"
     assert (src / "src" / "a.py").is_file()
-    assert (src / "src" / "b.py").read_bytes() == b"print(2)"
+    assert (src / "tests" / "test_b.py").is_file()

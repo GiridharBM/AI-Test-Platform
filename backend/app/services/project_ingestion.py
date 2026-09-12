@@ -85,6 +85,32 @@ def derive_project_name(relative_paths: list[str]) -> str:
     return "uploaded-project"
 
 
+def _wrapper_prefix(relative_paths: list[str]) -> str:
+    """Return the common leading directory component to strip from uploaded
+    paths, or "".
+
+    Browser folder uploads arrive as ``folder/file.py`` for every file. The
+    folder is upload metadata (the user selected it in the OS file dialog),
+    not part of the module namespace: the sandbox mounts the source tree at
+    /source with PYTHONPATH=/source, so ``calc.py`` must sit directly under
+    the root for a user behavioral test doing ``from calc import add`` to
+    resolve. Strip only when all paths share the same first component, at
+    least one path is nested under it, and it is not a real package root
+    (no ``prefix/__init__.py``) that the code imports by name.
+    """
+    if not relative_paths:
+        return ""
+    first = {p.split("/", 1)[0] for p in relative_paths}
+    if len(first) != 1:
+        return ""
+    prefix = next(iter(first))
+    if not any("/" in p for p in relative_paths):
+        return ""
+    if f"{prefix}/__init__.py" in relative_paths:
+        return ""
+    return prefix
+
+
 def project_dir(workspace: Path, project_id: str) -> Path:
     return workspace / project_id
 
@@ -318,9 +344,19 @@ def save_upload(
     dest_root = source_dir(ws, project_id).resolve()
     dest_root.mkdir(parents=True, exist_ok=True)
 
+    # Browser folder uploads carry the selected folder name as a path prefix
+    # (e.g. "m11-success-demo/calc.py"). Strip it so the source tree matches
+    # the project layout the user actually authored: /source/calc.py, not
+    # /source/m11-success-demo/calc.py. The sandbox import root (PYTHONPATH=/source)
+    # then resolves user + generated `from calc import add` identically.
+    strip_prefix = _wrapper_prefix([rel for rel, _ in sanitized])
+
     try:
         for safe_rel, content in sanitized:
-            final = (dest_root / safe_rel).resolve()
+            rel = safe_rel
+            if strip_prefix and rel.startswith(strip_prefix + "/"):
+                rel = rel[len(strip_prefix) + 1:]
+            final = (dest_root / rel).resolve()
             # Defence in depth: even after sanitization, verify containment.
             if not final.is_relative_to(dest_root):
                 raise IngestionError(

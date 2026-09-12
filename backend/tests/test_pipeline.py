@@ -790,6 +790,48 @@ def test_generate_merges_user_test_files(_workspace, tmp_path):
     assert src.read_text(encoding="utf-8") == "def test_add_returns_sum():\n    assert add(2, 3) == 5\n"
 
 
+def test_upload_strips_common_project_dir_prefix(_workspace):
+    """Browser folder uploads carry the selected folder name as a path prefix
+    (``m11-success-demo/calc.py``). The sandbox import root is /source
+    (PYTHONPATH=/source), so the wrapper folder must be stripped: the source
+    tree must contain calc.py directly, not nested under the folder name."""
+    pid = ingestion.save_upload([
+        ("m11-success-demo/calc.py", b"def add(a, b):\n    return a + b\n"),
+        ("m11-success-demo/test_calc.py", b"from calc import add\n\ndef test_add_returns_sum():\n    assert add(2, 3) == 5\n"),
+    ], _workspace).project_id
+    src = ingestion.source_dir(_workspace, pid)
+    assert (src / "calc.py").is_file()
+    assert (src / "test_calc.py").is_file()
+    assert not (src / "m11-success-demo").exists()
+    # Display name still derives from the original paths.
+    meta = ingestion.read_meta(_workspace, pid)
+    assert meta.name == "m11-success-demo"
+
+
+def test_upload_keeps_real_top_level_package(_workspace):
+    """A shared first component that is a genuine package root (carries
+    __init__.py) must NOT be stripped: it is the module namespace the code
+    imports by name."""
+    pid = ingestion.save_upload([
+        ("pkg/__init__.py", b""),
+        ("pkg/core.py", b"def add(a, b):\n    return a + b\n"),
+    ], _workspace).project_id
+    src = ingestion.source_dir(_workspace, pid)
+    assert (src / "pkg" / "__init__.py").is_file()
+    assert (src / "pkg" / "core.py").is_file()
+
+
+def test_upload_flat_files_untouched(_workspace):
+    """Files uploaded without a shared folder prefix keep their exact layout."""
+    pid = ingestion.save_upload([
+        ("calc.py", b"def add(a, b):\n    return a + b\n"),
+        ("test_calc.py", b"from calc import add\n\ndef test_add_returns_sum():\n    assert add(2, 3) == 5\n"),
+    ], _workspace).project_id
+    src = ingestion.source_dir(_workspace, pid)
+    assert (src / "calc.py").is_file()
+    assert (src / "test_calc.py").is_file()
+
+
 def test_generate_merge_never_overwrites_generated_files(_workspace, tmp_path):
     """A user test whose name collides with a generated scaffold must be copied
     under `user_` — the generated file content is never clobbered."""
@@ -912,3 +954,46 @@ def test_live_second_execution_of_improved_artifacts(_workspace):
     # pipeline stops deterministically at a gate or terminal, never in flight
     assert state.overall_status in (pl.PIPELINE_WAITING_USER, pl.PIPELINE_COMPLETED,
                                     pl.PIPELINE_BLOCKED)
+
+
+def test_live_uploaded_folder_project_executes_user_behavioral_test(_workspace):
+    """Real uploaded folder layout ``<project>/calc.py`` + ``<project>/test_calc.py``.
+
+    Browser uploads forward the selected folder name as a path prefix. The
+    sandbox mounts the (prefix-stripped) source tree at /source and sets
+    PYTHONPATH=/source; a user behavioral test doing ``from calc import add``
+    must import the source module inside the sandbox — collection must
+    succeed and the merged user test must actually run.
+    """
+    if not _docker_ready():
+        pytest.skip("Docker required for the live execution path")
+    pid = ingestion.save_upload([
+        ("m11-success-demo/calc.py", b"def add(a, b):\n    return a - b\n"),
+        ("m11-success-demo/test_calc.py",
+         b"from calc import add\n\ndef test_add_returns_sum():\n    assert add(2, 3) == 5\n"),
+    ], _workspace).project_id
+
+    src = ingestion.source_dir(_workspace, pid)
+    assert (src / "calc.py").is_file()          # prefix stripped at ingestion
+    assert not (src / "m11-success-demo").exists()
+
+    assert pl._exec_profile(_workspace, pid)[0] == pl.STAGE_SUCCESS
+    assert pl._exec_discover(_workspace, pid)[0] == pl.STAGE_SUCCESS
+    assert pl._exec_plan(_workspace, pid)[0] == pl.STAGE_SUCCESS
+    assert pl._exec_generate(_workspace, pid)[0] == pl.STAGE_SUCCESS
+
+    gen_dir = ingestion.project_dir(_workspace, pid) / "generated_tests"
+    assert (gen_dir / "user_test_calc.py").is_file()
+    assert (gen_dir / "user_test_calc.py").read_text(encoding="utf-8").startswith(
+        "from calc import add"
+    )
+
+    status, _, _, _ = pl._exec_execute(_workspace, pid)
+    assert status == pl.STAGE_SUCCESS  # usable sandbox execution, never unavailable
+    raw = ingestion.read_execution(_workspace, pid)
+    exec_result = json.loads(raw)
+    files = {r["file_path"]: r["status"] for r in exec_result["file_results"]}
+    # The merged user behavioral test was collected and ran (its assertion
+    # fails because add() returns a-b), proving `from calc import add`
+    # resolved inside the sandbox.
+    assert files.get("user_test_calc.py") == "failed"

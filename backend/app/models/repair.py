@@ -126,6 +126,16 @@ class RepairResult(BaseModel):
     approval_state: str = APPROVAL_PENDING
     application_state: str = APPLICATION_NOT_APPLIED
     final_validation: FinalValidation = FinalValidation()
+    # Acceptance baseline captured during candidate validation, reused by final
+    # validation so both gates use the SAME justified boundary: the target-linked
+    # behavioural failure must be resolved and no previously-passing test may
+    # regress, while unrelated pre-existing failures (e.g. generated scaffold
+    # placeholders) are tolerated. Keys are bare test function names as parsed
+    # by _parse_test_statuses. Empty for legacy results -> final validation
+    # falls back to the strict all-suite-pass gate (unchanged legacy behaviour).
+    baseline_statuses: dict[str, str] = Field(default_factory=dict)
+    # Still-failing behavioural tests linked to the SELECTED candidate's target.
+    target_test_functions: list[str] = Field(default_factory=list)
     warnings: list[str] = []
     reasons: list[str] = []
     created_at: datetime
