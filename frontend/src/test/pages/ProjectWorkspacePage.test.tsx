@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
@@ -290,5 +291,59 @@ describe('Project workspace — decision gates', () => {
     await screen.findByText('p_completed')
     expect(screen.queryByRole('button', { name: 'Run re-test' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Approve and apply repair' })).toBeNull()
+  })
+
+  it('reconciles immediately with authoritative state after a 409 conflict', async () => {
+    let gets = 0
+    let release!: (value: Response) => void
+    server.use(
+      http.post('/api/projects/p_waiting_user/pipeline/retest', () =>
+        HttpResponse.json(
+          {
+            detail:
+              'Invalid pipeline gate: action retest not permitted at awaiting_repair_approval',
+          },
+          { status: 409 },
+        ),
+      ),
+      http.get('/api/projects/p_waiting_user/pipeline', () => {
+        gets += 1
+        if (gets > 1) {
+          return new Promise<Response>((resolve) => {
+            release = resolve
+          })
+        }
+        return HttpResponse.json(
+          pipelineFixture('waiting_for_user', {
+            project_id: 'p_waiting_user',
+            pipeline_id: 'p_waiting_user',
+          }),
+        )
+      }),
+    )
+    renderWorkspace('p_waiting_user')
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Run re-test' }),
+    )
+
+    expect(await screen.findByRole('alert')).toBeDefined()
+
+    release(
+      HttpResponse.json(
+        pipelineFixture('completed', {
+          project_id: 'p_waiting_user',
+          pipeline_id: 'p_waiting_user',
+        }),
+      ),
+    )
+    await waitFor(() => {
+      expect(gets).toBeGreaterThan(1)
+      expect(
+        screen.queryByRole('button', { name: 'Run re-test' }),
+      ).toBeNull()
+      expect(
+        screen.queryByRole('button', { name: 'Skip re-test' }),
+      ).toBeNull()
+    })
   })
 })

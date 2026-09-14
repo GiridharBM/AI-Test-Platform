@@ -1,6 +1,8 @@
+import { useEffect, useRef, useState } from 'react'
+
 import { apiErrorMessage } from '../api/client'
-import { actionLabel } from '../api/labels'
-import type { PipelineState } from '../api/types'
+import { ACTION_LABELS, actionLabel } from '../api/labels'
+import type { PipelineActionName, PipelineState } from '../api/types'
 import { usePipelineAction } from '../hooks/usePipeline'
 
 interface PipelineActionsProps {
@@ -12,12 +14,28 @@ const PRIMARY_ACTIONS = new Set(['retest', 'repair', 'approve'])
 
 export function PipelineActions({ projectId, state }: PipelineActionsProps) {
   const mutation = usePipelineAction(projectId)
-  const actions = state.user_decision_required
-    ? state.available_actions
-    : []
+  const [confirmingApprove, setConfirmingApprove] = useState(false)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  const actions = (state.user_decision_required ? state.available_actions : []).filter(
+    (action): action is PipelineActionName => action in ACTION_LABELS,
+  )
+
+  useEffect(() => {
+    if (confirmingApprove) {
+      cancelRef.current?.focus()
+    }
+  }, [confirmingApprove])
 
   if (actions.length === 0) {
     return null
+  }
+
+  function requestAction(action: PipelineActionName) {
+    if (action === 'approve') {
+      setConfirmingApprove(true)
+      return
+    }
+    mutation.mutate(action)
   }
 
   return (
@@ -33,8 +51,8 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
           <button
             key={action}
             type="button"
-            onClick={() => mutation.mutate(action)}
-            disabled={mutation.isPending}
+            onClick={() => requestAction(action)}
+            disabled={mutation.isPending || confirmingApprove}
             aria-label={actionLabel(action)}
             className={
               PRIMARY_ACTIONS.has(action)
@@ -56,6 +74,53 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
         <p role="alert" className="mt-3 text-sm text-red-300">
           Action failed: {apiErrorMessage(mutation.error)}
         </p>
+      )}
+
+      {confirmingApprove && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="approve-dialog-title"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setConfirmingApprove(false)
+            }
+          }}
+          className="fixed inset-0 z-10 flex items-center justify-center bg-slate-950/70 p-4"
+        >
+          <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-5">
+            <h3 id="approve-dialog-title" className="text-base font-semibold text-white">
+              Approve and apply repair?
+            </h3>
+            <p className="mt-2 text-sm text-slate-300">
+              This will approve the validated repair candidate and apply the
+              change to the project source code. The repair has not been
+              applied yet.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                ref={cancelRef}
+                type="button"
+                onClick={() => setConfirmingApprove(false)}
+                disabled={mutation.isPending}
+                className="rounded-md border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingApprove(false)
+                  mutation.mutate('approve')
+                }}
+                disabled={mutation.isPending}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-amber-500 disabled:opacity-50"
+              >
+                Approve and apply repair
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

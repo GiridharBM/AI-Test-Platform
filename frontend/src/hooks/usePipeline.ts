@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { ApiError } from '../api/client'
 import { runPipelineAction } from '../api/pipeline'
 import { getPipeline } from '../api/projects'
 import { pipelineKeys } from '../api/pipeline'
@@ -44,6 +45,11 @@ export function usePipelineAction(projectId: string) {
     onSuccess: (data) => {
       queryClient.setQueryData(pipelineKeys.detail(projectId), data)
       queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.isConflict()) {
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.detail(projectId) })
+      }
     },
   })
 }
