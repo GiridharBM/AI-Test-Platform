@@ -12,7 +12,6 @@ export function PipelineStatus({ state }: PipelineStatusProps) {
     current_improvement_round,
     maximum_improvement_rounds,
     user_decision_required,
-    available_actions,
     reason,
     warnings,
     error,
@@ -54,11 +53,6 @@ export function PipelineStatus({ state }: PipelineStatusProps) {
       {user_decision_required && (
         <p role="status" className="mt-3 text-sm text-amber-300">
           A user decision is required before the pipeline can continue.
-        </p>
-      )}
-      {available_actions.length > 0 && (
-        <p role="status" className="mt-1 text-xs text-slate-400">
-          Possible actions: {available_actions.join(', ')}
         </p>
       )}
 

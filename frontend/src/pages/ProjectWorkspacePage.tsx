@@ -1,7 +1,8 @@
 import { Link, useParams } from 'react-router-dom'
 
-import { ApiError } from '../api/client'
+import { apiErrorMessage, ApiError } from '../api/client'
 import { ArtifactsOverview } from '../components/ArtifactsOverview'
+import { PipelineActions } from '../components/PipelineActions'
 import { PipelineProgress } from '../components/PipelineProgress'
 import { PipelineStatus } from '../components/PipelineStatus'
 import { ProjectHeader } from '../components/ProjectHeader'
@@ -12,19 +13,6 @@ import { useProjectRegistry } from '../hooks/useProjectRegistry'
 
 function apiStatus(error: unknown): number | null {
   return error instanceof ApiError ? error.status : null
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (!(error instanceof ApiError)) {
-    return 'Unexpected error.'
-  }
-  if (error.status === null) {
-    return 'Could not reach the server. Check that the backend is running.'
-  }
-  if (error.status >= 500) {
-    return `Server error (${error.status}).`
-  }
-  return error.message
 }
 
 export function ProjectWorkspacePage() {
@@ -79,7 +67,7 @@ export function ProjectWorkspacePage() {
               Could not load pipeline state.
             </p>
             <p className="mt-1 text-xs text-red-200/70">
-              Error: {safeErrorMessage(pipelineQuery.error)}
+              Error: {apiErrorMessage(pipelineQuery.error)}
             </p>
             <button
               type="button"
@@ -95,6 +83,10 @@ export function ProjectWorkspacePage() {
         {pipelineQuery.data !== undefined && (
           <>
             <PipelineStatus state={pipelineQuery.data} />
+            <PipelineActions
+              projectId={id}
+              state={pipelineQuery.data}
+            />
             <PipelineProgress
               currentStage={pipelineQuery.data.current_stage}
               completedStages={pipelineQuery.data.completed_stages}
@@ -145,7 +137,7 @@ export function ProjectWorkspacePage() {
               Could not load project details.
             </p>
             <p className="mt-1 text-xs text-red-200/70">
-              Error: {safeErrorMessage(projectQuery.error)}
+              Error: {apiErrorMessage(projectQuery.error)}
             </p>
             <button
               type="button"

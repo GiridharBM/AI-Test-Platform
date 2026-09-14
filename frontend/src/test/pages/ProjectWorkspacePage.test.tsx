@@ -261,15 +261,34 @@ describe('Project workspace — errors', () => {
   })
 })
 
-describe('Project workspace — decision boundary', () => {
-  it('reports a required decision but never renders Phase 5 action buttons', async () => {
+describe('Project workspace — decision gates', () => {
+  it('renders decision buttons only when required', async () => {
     renderWorkspace('p_waiting_user')
     expect(
-      await screen.findByText(/A user decision is required/i),
+      await screen.findByRole('button', { name: 'Run re-test' }),
     ).toBeDefined()
     expect(
-      screen.getByText(/Possible actions: retest, skip_retest/),
+      screen.getByRole('button', { name: 'Skip re-test' }),
     ).toBeDefined()
-    expect(screen.queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('advances past the retest gate after acting', async () => {
+    renderWorkspace('p_waiting_user')
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Run re-test' }),
+    )
+    expect(
+      await screen.findByRole('button', { name: 'Run repair' }),
+    ).toBeDefined()
+    expect(
+      screen.queryByRole('button', { name: 'Run re-test' }),
+    ).toBeNull()
+  })
+
+  it('does not render decision buttons at non-gate states', async () => {
+    renderWorkspace('p_completed')
+    await screen.findByText('p_completed')
+    expect(screen.queryByRole('button', { name: 'Run re-test' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve and apply repair' })).toBeNull()
   })
 })

@@ -30,9 +30,6 @@ describe('PipelineStatus', () => {
     expect(
       screen.getByText(/A user decision is required/i),
     ).toBeDefined()
-    expect(
-      screen.getByText(/Possible actions: retest, skip_retest/),
-    ).toBeDefined()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
 

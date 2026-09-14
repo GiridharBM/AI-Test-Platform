@@ -1,4 +1,8 @@
-import type { PipelineOverallStatus, StageStatus } from './types'
+import type {
+  PipelineActionName,
+  PipelineOverallStatus,
+  StageStatus,
+} from './types'
 
 export const AUTO_PIPELINE_STAGES = [
   'profile',
@@ -96,4 +100,17 @@ export function formatTimestamp(iso: string): string {
     return iso
   }
   return date.toLocaleString()
+}
+
+export const ACTION_LABELS: Record<PipelineActionName, string> = {
+  retest: 'Run re-test',
+  skip_retest: 'Skip re-test',
+  repair: 'Run repair',
+  skip_repair: 'Skip repair',
+  approve: 'Approve and apply repair',
+  reject: 'Reject repair',
+}
+
+export function actionLabel(action: string): string {
+  return ACTION_LABELS[action as PipelineActionName] ?? action
 }

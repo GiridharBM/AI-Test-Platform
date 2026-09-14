@@ -1,8 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { runPipelineAction } from '../api/pipeline'
 import { getPipeline } from '../api/projects'
 import { pipelineKeys } from '../api/pipeline'
-import type { PipelineState } from '../api/types'
+import { projectKeys } from '../api/projects'
+import type { PipelineActionName, PipelineState } from '../api/types'
 import { shouldRetryRead } from './useProject'
 
 export const PIPELINE_POLL_RUNNING_MS = 2000
@@ -32,5 +34,16 @@ export function usePipeline(projectId: string) {
     refetchInterval: (query) => pipelinePollingIntervalMs(query.state.data),
     retry: shouldRetryRead,
     refetchOnWindowFocus: false,
+  })
+}
+
+export function usePipelineAction(projectId: string) {
+  const queryClient = useQueryClient()
+  return useMutation<PipelineState, unknown, PipelineActionName>({
+    mutationFn: (action) => runPipelineAction(projectId, action),
+    onSuccess: (data) => {
+      queryClient.setQueryData(pipelineKeys.detail(projectId), data)
+      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
+    },
   })
 }

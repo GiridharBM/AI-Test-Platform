@@ -16,6 +16,19 @@ export class ApiError extends Error {
   }
 }
 
+export function apiErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return 'Unexpected error.'
+  }
+  if (error.status === null) {
+    return 'Could not reach the server. Check that the backend is running.'
+  }
+  if (error.status >= 500) {
+    return `Server error (${error.status}).`
+  }
+  return error.message
+}
+
 const JSON_HEADERS = { Accept: 'application/json' }
 
 export function get<T>(path: string): Promise<T> {
