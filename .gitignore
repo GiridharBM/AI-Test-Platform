@@ -79,3 +79,7 @@ docker-compose.override.yml
 test-results/
 playwright-report/
 coverage/
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
