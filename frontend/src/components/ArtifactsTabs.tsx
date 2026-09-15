@@ -1,12 +1,18 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { ProjectDetails } from '../api/types'
 
 import { ArtifactsOverview } from './ArtifactsOverview'
 
+const TAB_PANEL_ID = 'artifact-tabpanel'
+
 interface ArtifactTab {
   key: keyof ProjectDetails
   label: string
+}
+
+function tabId(key: string): string {
+  return `artifact-tab-${key}`
 }
 
 const ARTIFACT_TABS: ArtifactTab[] = [
@@ -21,6 +27,17 @@ const ARTIFACT_TABS: ArtifactTab[] = [
   { key: 'evaluation', label: 'Evaluation' },
   { key: 'repair', label: 'Source repair' },
 ]
+
+function CodeBlock({ label, code }: { label: string; code: string }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <pre className="mt-1 max-w-full overflow-x-auto whitespace-pre rounded-md border border-slate-700 bg-slate-950 p-3 text-xs text-slate-300">
+        {code}
+      </pre>
+    </div>
+  )
+}
 
 interface ArtifactsTabsProps {
   project: ProjectDetails
@@ -171,10 +188,20 @@ function TestGenerationDetail({ project }: { project: ProjectDetails }) {
         </div>
       </div>
       {gen.files.length > 0 && (
-        <div className="overflow-x-auto">
-          <pre className="rounded-md border border-slate-700 bg-slate-900 p-3 text-xs text-slate-300">
-            {gen.files.map((f) => f.file_path).join('\n')}
-          </pre>
+        <div className="space-y-2">
+          {gen.files.map((file) => (
+            <details
+              key={file.file_path}
+              className="rounded-md border border-slate-700 bg-slate-900"
+            >
+              <summary className="cursor-pointer p-3 font-mono text-xs text-slate-200">
+                {file.file_path} · {file.target_count} targets
+              </summary>
+              <div className="px-3 pb-3">
+                <CodeBlock label="Content" code={file.content} />
+              </div>
+            </details>
+          ))}
         </div>
       )}
       {gen.warnings.length > 0 && (
@@ -251,12 +278,44 @@ function DiagnosisDetail({ project }: { project: ProjectDetails }) {
         </div>
       </div>
       {diag.findings.length > 0 && (
-        <ul className="list-inside list-disc space-y-1">
+        <ul className="space-y-2">
           {diag.findings.map((f) => (
             <li key={f.finding_id}>
-              <span className="text-slate-300">{f.test_function}</span>{' '}
-              <span className="text-slate-500">({f.category})</span>{' '}
-              <span className="text-slate-500">severity: {f.severity}</span>
+              <details className="rounded-md border border-slate-700 bg-slate-900">
+                <summary className="cursor-pointer p-3 text-sm">
+                  <span className="text-slate-300">{f.test_function}</span>{' '}
+                  <span className="text-slate-500">({f.category})</span>{' '}
+                  <span className="text-slate-500">severity: {f.severity}</span>
+                </summary>
+                <div className="space-y-2 px-3 pb-3 text-sm">
+                  {f.message !== '' && (
+                    <p className="text-slate-300">{f.message}</p>
+                  )}
+                  {f.exception_type !== '' && (
+                    <p className="text-slate-400">
+                      Exception: {f.exception_type}
+                    </p>
+                  )}
+                  {f.traceback !== '' && (
+                    <CodeBlock label="Traceback" code={f.traceback} />
+                  )}
+                  {f.linked_locations.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">
+                        Linked locations
+                      </p>
+                      <ul className="mt-1 list-inside list-disc text-slate-300">
+                        {f.linked_locations.map((loc, i) => (
+                          <li key={i}>
+                            {loc.source_file}:{loc.line_start}–{loc.line_end} (
+                            {loc.qualified_name})
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </details>
             </li>
           ))}
         </ul>
@@ -289,11 +348,22 @@ function ImprovementDetail({ project }: { project: ProjectDetails }) {
         </div>
       </div>
       {imp.changes.length > 0 && (
-        <ul className="list-inside list-disc space-y-1">
+        <ul className="space-y-2">
           {imp.changes.map((c, i) => (
             <li key={i}>
-              <span className="text-slate-300">{c.test_function}</span>{' '}
-              <span className="text-slate-500">({c.status})</span>
+              <details className="rounded-md border border-slate-700 bg-slate-900">
+                <summary className="cursor-pointer p-3 text-sm">
+                  <span className="text-slate-300">{c.test_function}</span>{' '}
+                  <span className="text-slate-500">({c.status})</span>
+                </summary>
+                <div className="space-y-2 px-3 pb-3 text-sm">
+                  {c.reason !== '' && (
+                    <p className="text-slate-300">{c.reason}</p>
+                  )}
+                  <CodeBlock label="Before" code={c.before} />
+                  <CodeBlock label="After" code={c.after} />
+                </div>
+              </details>
             </li>
           ))}
         </ul>
@@ -395,6 +465,31 @@ function EvaluationDetail({ project }: { project: ProjectDetails }) {
 function RepairDetail({ project }: { project: ProjectDetails }) {
   const repair = project.repair
   if (!repair) return null
+
+  const statusLine = (() => {
+    if (repair.application_state === 'applied') {
+      return project.origin === 'upload'
+        ? 'Repair applied to the platform workspace copy.'
+        : 'Repair applied to the project source.'
+    }
+    if (repair.approval_state === 'rejected') {
+      return 'Repair was rejected and not applied.'
+    }
+    if (repair.approval_state === 'approved') {
+      return 'Repair candidate approved. Awaiting application.'
+    }
+    if (
+      repair.status === 'validated_pending_approval' ||
+      (repair.selected_candidate !== null && repair.approval_state === 'pending')
+    ) {
+      return 'Repair candidate validated and awaiting approval.'
+    }
+    if (repair.attempts.length > 0) {
+      return 'Repair candidate generated and being validated.'
+    }
+    return null
+  })()
+
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap gap-4">
@@ -414,16 +509,79 @@ function RepairDetail({ project }: { project: ProjectDetails }) {
           {repair.attempts.length}
         </div>
       </div>
+      {statusLine !== null && (
+        <p
+          className={
+            repair.application_state === 'applied'
+              ? 'text-emerald-300'
+              : repair.approval_state === 'rejected'
+                ? 'text-red-300'
+                : 'text-amber-300'
+          }
+        >
+          {statusLine}
+        </p>
+      )}
       {repair.final_validation.status !== 'not_run' && (
         <div>
           <span className="text-slate-400">Final validation:</span>{' '}
           {repair.final_validation.status}
+          {repair.final_validation.reason !== '' && (
+            <p className="mt-0.5 text-slate-300">
+              {repair.final_validation.reason}
+            </p>
+          )}
         </div>
       )}
-      {repair.application_state === 'applied' && project.origin === 'upload' && (
-        <p className="text-emerald-300">
-          Repair applied to the platform workspace copy.
-        </p>
+      {repair.selected_candidate !== null && (
+        <details className="rounded-md border border-slate-700 bg-slate-900">
+          <summary className="cursor-pointer p-3 text-sm font-medium text-slate-200">
+            Candidate: {repair.selected_candidate.operation}
+          </summary>
+          <div className="space-y-2 px-3 pb-3 text-sm">
+            <p className="text-slate-300">
+              {repair.selected_candidate.file_path}:{' '}
+              {repair.selected_candidate.source_location}
+            </p>
+            {repair.selected_candidate.rationale !== '' && (
+              <p className="text-slate-300">
+                {repair.selected_candidate.rationale}
+              </p>
+            )}
+            <CodeBlock label="Before" code={repair.selected_candidate.before} />
+            <CodeBlock label="After" code={repair.selected_candidate.after} />
+          </div>
+        </details>
+      )}
+      {repair.attempts.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-slate-500">Attempts</p>
+          {repair.attempts.map((attempt) => (
+            <details
+              key={attempt.attempt_number}
+              className="rounded-md border border-slate-700 bg-slate-900"
+            >
+              <summary className="cursor-pointer p-3 text-sm">
+                <span className="text-slate-300">
+                  Attempt {attempt.attempt_number}
+                </span>{' '}
+                <span className="text-slate-500">
+                  validation: {attempt.validation_status}
+                </span>
+              </summary>
+              <div className="space-y-2 px-3 pb-3 text-sm">
+                {attempt.rationale !== '' && (
+                  <p className="text-slate-300">{attempt.rationale}</p>
+                )}
+                {attempt.failure_reason !== '' && (
+                  <p className="text-red-300">{attempt.failure_reason}</p>
+                )}
+                <CodeBlock label="Before" code={attempt.before} />
+                <CodeBlock label="After" code={attempt.after} />
+              </div>
+            </details>
+          ))}
+        </div>
       )}
       {repair.warnings.length > 0 && (
         <ul className="list-inside list-disc text-amber-200/90">
@@ -454,6 +612,37 @@ export function ArtifactsTabs({ project }: ArtifactsTabsProps) {
   const [activeTab, setActiveTab] = useState<string>(
     () => availableTabs[0]?.key ?? '',
   )
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
+
+  function focusTab(key: string) {
+    tabRefs.current.get(key)?.focus()
+  }
+
+  function onTablistKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const currentIndex = availableTabs.findIndex((t) => t.key === activeTab)
+    if (currentIndex === -1) return
+    let nextIndex = currentIndex
+    switch (event.key) {
+      case 'ArrowRight':
+        nextIndex = (currentIndex + 1) % availableTabs.length
+        break
+      case 'ArrowLeft':
+        nextIndex = (currentIndex - 1 + availableTabs.length) % availableTabs.length
+        break
+      case 'Home':
+        nextIndex = 0
+        break
+      case 'End':
+        nextIndex = availableTabs.length - 1
+        break
+      default:
+        return
+    }
+    event.preventDefault()
+    const nextKey = availableTabs[nextIndex].key
+    setActiveTab(nextKey)
+    focusTab(nextKey)
+  }
 
   return (
     <div className="space-y-4">
@@ -465,25 +654,44 @@ export function ArtifactsTabs({ project }: ArtifactsTabsProps) {
         </p>
       ) : (
         <div>
-          <div role="tablist" className="flex flex-wrap gap-1 border-b border-slate-800">
+          <div
+            role="tablist"
+            onKeyDown={onTablistKeyDown}
+            className="flex gap-1 overflow-x-auto border-b border-slate-800"
+          >
             {availableTabs.map(({ key, label }) => (
               <button
                 key={key}
+                ref={(node) => {
+                  if (node) {
+                    tabRefs.current.set(key, node)
+                  } else {
+                    tabRefs.current.delete(key)
+                  }
+                }}
                 role="tab"
                 type="button"
+                id={tabId(key)}
                 aria-selected={activeTab === key}
+                aria-controls={TAB_PANEL_ID}
+                tabIndex={activeTab === key ? 0 : -1}
                 onClick={() => setActiveTab(key)}
                 className={
                   activeTab === key
-                    ? 'border-b-2 border-amber-500 px-3 py-2 text-sm font-medium text-white'
-                    : 'px-3 py-2 text-sm text-slate-400 hover:text-white'
+                    ? 'shrink-0 border-b-2 border-amber-500 px-3 py-2 text-sm font-medium text-white'
+                    : 'shrink-0 px-3 py-2 text-sm text-slate-400 hover:text-white'
                 }
               >
                 {label}
               </button>
             ))}
           </div>
-          <div role="tabpanel" className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <div
+            id={TAB_PANEL_ID}
+            role="tabpanel"
+            aria-labelledby={tabId(activeTab)}
+            className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-4"
+          >
             {activeTab !== '' && (() => {
               const Renderer = DETAIL_RENDERERS[activeTab]
               return Renderer ? <Renderer project={project} /> : null

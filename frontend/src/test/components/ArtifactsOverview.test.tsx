@@ -46,4 +46,41 @@ describe('ArtifactsOverview', () => {
     render(<ArtifactsOverview project={project} />)
     expect(screen.queryByText(/findings/)).toBeNull()
   })
+
+  it('shows a concise summary line per available artifact', () => {
+    const project = projectDetailsFixture()
+    render(<ArtifactsOverview project={project} />)
+    expect(screen.getByText(/Small · Python/)).toBeDefined()
+    expect(screen.getByText(/failed · 0 passed · 1 failed/)).toBeDefined()
+    expect(screen.getByText(/1 still failing \/ regression/)).toBeDefined()
+    expect(screen.getByText(/66\.7% line coverage/)).toBeDefined()
+    expect(screen.getByText(/awaiting approval/)).toBeDefined()
+  })
+
+  it('highlights failed execution and unresolved retest as errors', () => {
+    const project = projectDetailsFixture()
+    render(<ArtifactsOverview project={project} />)
+    const execution = screen.getByText('Test execution').closest('li')
+    expect(execution?.className).toContain('border-red-800/50')
+    const retest = screen.getByText('Re-test').closest('li')
+    expect(retest?.className).toContain('border-red-800/50')
+  })
+
+  it('shows coverage-awaiting and repair-awaiting states as warnings', () => {
+    const project = projectDetailsFixture({
+      evaluation: {
+        ...projectDetailsFixture().evaluation!,
+        coverage: {
+          ...projectDetailsFixture().evaluation!.coverage,
+          status: 'blocked',
+          line_percentage: 0,
+        },
+      },
+    })
+    render(<ArtifactsOverview project={project} />)
+    const evaluation = screen.getByText('Evaluation').closest('li')
+    expect(evaluation?.className).toContain('border-amber-700/50')
+    const repair = screen.getByText('Source repair').closest('li')
+    expect(repair?.className).toContain('border-amber-700/50')
+  })
 })

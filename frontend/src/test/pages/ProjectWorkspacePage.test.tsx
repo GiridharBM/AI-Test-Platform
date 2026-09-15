@@ -11,7 +11,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import App from '../../App'
-import { pipelineFixture } from '../mocks/handlers'
+import { pipelineFixture, projectDetailsFixture } from '../mocks/handlers'
 import { installMswServer } from '../mocks/install'
 import { server } from '../mocks/server'
 
@@ -344,6 +344,41 @@ describe('Project workspace — decision gates', () => {
       expect(
         screen.queryByRole('button', { name: 'Skip re-test' }),
       ).toBeNull()
-    })
+})
+})
+
+describe('Project workspace — artifact navigation', () => {
+  it('does not fetch project details again when switching artifact tabs', async () => {
+    let projectGets = 0
+    server.use(
+      http.get('/api/projects/p_completed', () => {
+        projectGets += 1
+        return HttpResponse.json(
+          projectDetailsFixture({
+            project_id: 'p_completed',
+            name: 'p_completed',
+          }),
+        )
+      }),
+    )
+    renderWorkspace('p_completed')
+    const profileTab = await screen.findByRole('tab', { name: 'Profile' })
+    fireEvent.click(profileTab)
+    const projectRequestsAfterLoad = projectGets
+    fireEvent.click(screen.getByRole('tab', { name: 'Test execution' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Diagnosis' }))
+    expect(projectGets).toBe(projectRequestsAfterLoad)
   })
+
+  it('renders the artifacts section before the stage history', async () => {
+    renderWorkspace('p_completed')
+    const artifacts = await screen.findByRole('region', { name: 'Artifacts' })
+    const history = await screen.findByRole('region', {
+      name: 'Stage history',
+    })
+    expect(
+      artifacts.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+})
 })

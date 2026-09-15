@@ -81,8 +81,9 @@ describe('ArtifactsTabs', () => {
   it('renders profile details in the profile tab', () => {
     render(<ArtifactsTabs project={projectDetailsFixture()} />)
     fireEvent.click(screen.getByRole('tab', { name: 'Profile' }))
-    expect(screen.getByText(/Python/)).toBeDefined()
-    expect(screen.getByText(/Small/)).toBeDefined()
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText(/Python/)).toBeDefined()
+    expect(within(panel).getByText(/Small/)).toBeDefined()
   })
 
   it('renders codemap details when available', () => {
@@ -273,5 +274,165 @@ describe('ArtifactsTabs', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Evaluation' }))
     const panel = screen.getByRole('tabpanel')
     expect(within(panel).getByText('—')).toBeDefined()
+  })
+
+  it('moves focus and selection with the right arrow key', () => {
+    render(<ArtifactsTabs project={projectDetailsFixture()} />)
+    const profileTab = screen.getByRole('tab', { name: 'Profile' })
+    profileTab.focus()
+    fireEvent.keyDown(profileTab, { key: 'ArrowRight' })
+    const executionTab = screen.getByRole('tab', { name: 'Test execution' })
+    expect(executionTab).toHaveFocus()
+    expect(executionTab.getAttribute('aria-selected')).toBe('true')
+    expect(profileTab.getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('moves selection with the left arrow key and wraps around', () => {
+    render(<ArtifactsTabs project={projectDetailsFixture()} />)
+    const profileTab = screen.getByRole('tab', { name: 'Profile' })
+    profileTab.focus()
+    fireEvent.keyDown(profileTab, { key: 'ArrowLeft' })
+    const repairTab = screen.getByRole('tab', { name: 'Source repair' })
+    expect(repairTab).toHaveFocus()
+    expect(repairTab.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('jumps to the first and last tab with Home and End keys', () => {
+    render(<ArtifactsTabs project={projectDetailsFixture()} />)
+    const diagnosisTab = screen.getByRole('tab', { name: 'Diagnosis' })
+    diagnosisTab.focus()
+    fireEvent.keyDown(diagnosisTab, { key: 'Home' })
+    expect(screen.getByRole('tab', { name: 'Profile' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Profile' }), {
+      key: 'End',
+    })
+    expect(screen.getByRole('tab', { name: 'Source repair' })).toHaveFocus()
+  })
+
+  it('associates tabs with the panel via aria-controls and id', () => {
+    render(<ArtifactsTabs project={projectDetailsFixture()} />)
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.getAttribute('id')).toBe('artifact-tabpanel')
+    expect(panel.getAttribute('aria-labelledby')).toBe('artifact-tab-profile')
+    const profileTab = screen.getByRole('tab', { name: 'Profile' })
+    expect(profileTab.getAttribute('aria-controls')).toBe('artifact-tabpanel')
+    expect(profileTab.getAttribute('id')).toBe('artifact-tab-profile')
+  })
+
+  it('shows the generated test file content in a collapsible block', () => {
+    const project = projectDetailsFixture({
+      test_generation: testGenerationFixture(),
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Generated tests' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText(/test_calculator\.py/)).toBeDefined()
+    const details = within(panel).getByText(/test_calculator\.py/).closest('details')
+    expect(details).not.toBeNull()
+    expect(within(details as HTMLElement).getByText(/assert add\(1, 2\) == 3/)).toBeDefined()
+  })
+
+  it('shows diagnosis traceback and exception in a collapsible finding', () => {
+    const diagnosis = projectDetailsFixture().diagnosis!
+    const project = projectDetailsFixture({
+      diagnosis: {
+        ...diagnosis,
+        findings: [
+          {
+            ...diagnosis.findings[0],
+            traceback: 'Traceback (most recent call last):\n  assert add(1, 2) == 3',
+          },
+        ],
+      },
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Diagnosis' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText(/test_add/)).toBeDefined()
+    const finding = within(panel).getByText(/test_add/).closest('details')
+    expect(finding).not.toBeNull()
+    const findingPanel = within(finding as HTMLElement)
+    expect(findingPanel.getByText(/most recent call last/)).toBeDefined()
+    expect(findingPanel.getByText(/AssertionError/)).toBeDefined()
+  })
+
+  it('shows improvement before and after code in a collapsible change', () => {
+    const project = projectDetailsFixture({
+      improvement: improvementFixture(),
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Improvement' }))
+    const panel = screen.getByRole('tabpanel')
+    const change = within(panel).getByText(/test_add/).closest('details')
+    expect(change).not.toBeNull()
+    const changePanel = within(change as HTMLElement)
+    expect(changePanel.getByText(/assert add\(1, 2\) == 5/)).toBeDefined()
+    expect(changePanel.getByText(/assert add\(1, 2\) == 3/)).toBeDefined()
+  })
+
+  it('shows repair candidate details and awaiting-approval wording', () => {
+    render(<ArtifactsTabs project={projectDetailsFixture()} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Source repair' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(
+      within(panel).getByText(
+        'Repair candidate validated and awaiting approval.',
+      ),
+    ).toBeDefined()
+    const candidate = within(panel).getByText(/Candidate: replace binop body/).closest('details')
+    expect(candidate).not.toBeNull()
+    const candidatePanel = within(candidate as HTMLElement)
+    expect(candidatePanel.getByText(/return a \+ b/)).toBeDefined()
+    expect(within(panel).getByText(/Attempt 1/)).toBeDefined()
+  })
+
+  it('shows rejected repair wording', () => {
+    const project = projectDetailsFixture({
+      repair: {
+        ...projectDetailsFixture().repair!,
+        status: 'rejected',
+        approval_state: 'rejected',
+        application_state: 'not_applied',
+      },
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Source repair' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(
+      within(panel).getByText('Repair was rejected and not applied.'),
+    ).toBeDefined()
+  })
+
+  it('shows applied repair wording for path origin', () => {
+    const project = projectDetailsFixture({
+      origin: 'path',
+      repair: appliedRepairFixture(),
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Source repair' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(
+      within(panel).getByText('Repair applied to the project source.'),
+    ).toBeDefined()
+  })
+
+  it('shows final validation status when it ran', () => {
+    const project = projectDetailsFixture({
+      repair: {
+        ...projectDetailsFixture().repair!,
+        final_validation: {
+          status: 'passed',
+          execution_result: null,
+          reason: 'All target tests pass after the repair.',
+        },
+      },
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Source repair' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText('Final validation:')).toBeDefined()
+    expect(
+      within(panel).getByText('All target tests pass after the repair.'),
+    ).toBeDefined()
   })
 })

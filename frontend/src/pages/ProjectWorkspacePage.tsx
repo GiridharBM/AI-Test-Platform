@@ -113,11 +113,6 @@ export function ProjectWorkspacePage() {
         )}
       </section>
 
-      <section aria-label="Stage history" className="space-y-3">
-        <h2 className="text-lg font-semibold">Stage History</h2>
-        <StageHistory records={pipelineQuery.data?.stage_history ?? []} />
-      </section>
-
       <section aria-label="Artifacts" className="space-y-3">
         <h2 className="text-lg font-semibold">Artifacts</h2>
 
@@ -166,6 +161,11 @@ export function ProjectWorkspacePage() {
         {projectQuery.data !== undefined && (
           <ArtifactsTabs project={projectQuery.data} />
         )}
+      </section>
+
+      <section aria-label="Stage history" className="space-y-3">
+        <h2 className="text-lg font-semibold">Stage History</h2>
+        <StageHistory records={pipelineQuery.data?.stage_history ?? []} />
       </section>
     </div>
   )

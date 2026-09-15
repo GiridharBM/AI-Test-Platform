@@ -34,6 +34,12 @@ export function StageHistory({ records }: StageHistoryProps) {
             className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3"
           >
             <div className="flex flex-wrap items-center gap-2">
+              <span
+                aria-label={`Step ${index + 1}`}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs text-slate-400"
+              >
+                {index + 1}
+              </span>
               <span className="font-medium">
                 {stageLabel}{' '}
                 <span className="font-mono text-xs text-slate-500">

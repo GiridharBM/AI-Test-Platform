@@ -82,4 +82,15 @@ describe('StageHistory', () => {
     expect(approveRecord.result_id).toBe('')
     expect(screen.queryByText('Result: ')).toBeNull()
   })
+
+  it('numbers each step sequentially', () => {
+    render(<StageHistory records={records} />)
+    expect(screen.getByLabelText('Step 1')).toBeDefined()
+    expect(screen.getByLabelText('Step 2')).toBeDefined()
+    expect(screen.getByLabelText('Step 3')).toBeDefined()
+    const badges = records.map(
+      (_, i) => screen.getByLabelText(`Step ${i + 1}`).textContent,
+    )
+    expect(badges).toEqual(['1', '2', '3'])
+  })
 })
