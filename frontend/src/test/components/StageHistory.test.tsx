@@ -70,4 +70,16 @@ describe('StageHistory', () => {
     expect(screen.getByText('Rejected')).toBeDefined()
     expect(screen.getByText('(approve)')).toBeDefined()
   })
+
+  it('shows the result_id when present', () => {
+    render(<StageHistory records={records} />)
+    expect(screen.getByText('Result: profile-1')).toBeDefined()
+  })
+
+  it('does not show a Result line when result_id is empty', () => {
+    render(<StageHistory records={records} />)
+    const approveRecord = records[1]
+    expect(approveRecord.result_id).toBe('')
+    expect(screen.queryByText('Result: ')).toBeNull()
+  })
 })

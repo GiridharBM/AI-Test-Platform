@@ -1,8 +1,11 @@
 import { Link, useParams } from 'react-router-dom'
 
 import { apiErrorMessage, ApiError } from '../api/client'
-import { ArtifactsOverview } from '../components/ArtifactsOverview'
-import { PipelineActions } from '../components/PipelineActions'
+import { isTerminalErrorStatus } from '../api/labels'
+import { ArtifactsTabs } from '../components/ArtifactsTabs'
+import { CompletionPanel } from '../components/CompletionPanel'
+import { DecisionCard } from '../components/DecisionCard'
+import { ErrorPanel } from '../components/ErrorPanel'
 import { PipelineProgress } from '../components/PipelineProgress'
 import { PipelineStatus } from '../components/PipelineStatus'
 import { ProjectHeader } from '../components/ProjectHeader'
@@ -36,6 +39,9 @@ export function ProjectWorkspacePage() {
   const pipelineUpdating =
     pipelineQuery.isFetching && pipelineQuery.data !== undefined
 
+  const p = pipelineQuery.data
+  const isTerminalError = p !== undefined && isTerminalErrorStatus(p.overall_status)
+
   return (
     <div className="space-y-8">
       <ProjectHeader
@@ -43,6 +49,7 @@ export function ProjectWorkspacePage() {
         name={projectQuery.data?.name}
         fallbackName={localProject?.name}
         loading={projectQuery.isPending}
+        pipeline={p !== undefined ? { current_stage: p.current_stage, overall_status: p.overall_status, user_decision_required: p.user_decision_required } : undefined}
       />
 
       <section aria-label="Pipeline status" className="space-y-4">
@@ -80,16 +87,22 @@ export function ProjectWorkspacePage() {
           </div>
         )}
 
-        {pipelineQuery.data !== undefined && (
+        {p !== undefined && (
           <>
-            <PipelineStatus state={pipelineQuery.data} />
-            <PipelineActions
-              projectId={id}
-              state={pipelineQuery.data}
-            />
+            {isTerminalError ? (
+              <ErrorPanel state={p} />
+            ) : (
+              <PipelineStatus state={p} />
+            )}
+            {p.overall_status === 'completed' && projectQuery.data !== undefined && (
+              <CompletionPanel project={projectQuery.data} />
+            )}
+            <DecisionCard projectId={id} state={p} />
             <PipelineProgress
-              currentStage={pipelineQuery.data.current_stage}
-              completedStages={pipelineQuery.data.completed_stages}
+              currentStage={p.current_stage}
+              completedStages={p.completed_stages}
+              overallStatus={p.overall_status}
+              userDecisionRequired={p.user_decision_required}
             />
             {pipelineUpdating && (
               <p role="status" className="text-xs text-slate-500">
@@ -151,7 +164,7 @@ export function ProjectWorkspacePage() {
         )}
 
         {projectQuery.data !== undefined && (
-          <ArtifactsOverview project={projectQuery.data} />
+          <ArtifactsTabs project={projectQuery.data} />
         )}
       </section>
     </div>

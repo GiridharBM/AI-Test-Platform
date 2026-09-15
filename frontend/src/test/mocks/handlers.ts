@@ -11,6 +11,10 @@ import type {
   TestExecutionResult,
   DiagnosisResult,
   ProjectProfile,
+  CodeMap,
+  TestPlan,
+  TestGenerationResult,
+  ImprovementResult,
   StageRecord,
   StageStatus,
 } from '../../api/types'
@@ -186,7 +190,197 @@ const PIPELINE_BY_ID: Record<string, Partial<PipelineState>> = {
   p_rejected: pipelineFixture('rejected'),
 }
 
-export { projectDetailsFixture, stageHistoryStep }
+export {
+  projectDetailsFixture,
+  stageHistoryStep,
+  codemapFixture,
+  testPlanFixture,
+  testGenerationFixture,
+  improvementFixture,
+  appliedRepairFixture,
+}
+
+function codemapFixture(overrides: Partial<CodeMap> = {}): CodeMap {
+  return {
+    schema_version: 1,
+    project_id: 'demo_project',
+    created_at: '2026-01-01T09:01:00Z',
+    source_modules: [
+      {
+        path: 'calculator.py',
+        language: 'python',
+        functions: [
+          {
+            name: 'add',
+            qualified_name: 'add',
+            file_path: 'calculator.py',
+            line_start: 1,
+            line_end: 3,
+            args: ['a', 'b'],
+            decorators: [],
+            has_docstring: false,
+            is_async: false,
+          },
+        ],
+        classes: [],
+        imports: [],
+      },
+    ],
+    test_functions: [
+      {
+        name: 'test_add',
+        file_path: 'generated_tests/test_calculator.py',
+        line_start: 1,
+        line_end: 4,
+        decorators: [],
+        has_docstring: false,
+        assertion_count: 1,
+      },
+    ],
+    test_mappings: [
+      {
+        test_function: 'test_add',
+        test_file: 'generated_tests/test_calculator.py',
+        source_target: 'add',
+        source_file: 'calculator.py',
+        confidence: 0.95,
+        method: 'semantic',
+      },
+    ],
+    testable_targets: [
+      {
+        qualified_name: 'add',
+        file_path: 'calculator.py',
+        target_type: 'function',
+        has_tests: true,
+        test_count: 1,
+        test_files: ['generated_tests/test_calculator.py'],
+        mapped_tests: ['test_add'],
+      },
+    ],
+    coverage_summary: {
+      total_targets: 4,
+      targets_with_tests: 1,
+      targets_without_tests: 3,
+      coverage_percentage: 25,
+      untested_functions: ['subtract', 'multiply', 'divide'],
+      untested_endpoints: [],
+    },
+    warnings: [],
+    ...overrides,
+  }
+}
+
+function testPlanFixture(overrides: Partial<TestPlan> = {}): TestPlan {
+  return {
+    schema_version: 1,
+    project_id: 'demo_project',
+    created_at: '2026-01-01T09:02:00Z',
+    specs: [
+      {
+        target_qualified_name: 'add',
+        target_file: 'calculator.py',
+        target_type: 'function',
+        priority: 1,
+        test_type: 'unit',
+        suggested_test_name: 'test_add_basic',
+        preconditions: [],
+        edge_cases: [],
+        related_tested_targets: [],
+        risk_score: 0.9,
+      },
+    ],
+    summary: {
+      total_specs: 4,
+      critical_count: 1,
+      high_count: 1,
+      medium_count: 1,
+      low_count: 1,
+      by_type: { unit: 4 },
+      untested_modules: [],
+    },
+    warnings: [],
+    ...overrides,
+  }
+}
+
+function testGenerationFixture(
+  overrides: Partial<TestGenerationResult> = {},
+): TestGenerationResult {
+  return {
+    schema_version: 1,
+    project_id: 'demo_project',
+    created_at: '2026-01-01T09:03:00Z',
+    files: [
+      {
+        file_path: 'generated_tests/test_calculator.py',
+        content: 'def test_add():\n    assert add(1, 2) == 3\n',
+        target_count: 4,
+        priority_range: '1-4',
+        framework: 'pytest',
+      },
+    ],
+    summary: {
+      total_files: 1,
+      total_test_functions: 4,
+      total_edge_cases: 2,
+      by_priority: { '1': 1, '2': 1, '3': 1, '4': 1 },
+      by_type: { unit: 4 },
+      framework_used: 'pytest',
+    },
+    warnings: [],
+    merged_user_files: [],
+    ...overrides,
+  }
+}
+
+function improvementFixture(
+  overrides: Partial<ImprovementResult> = {},
+): ImprovementResult {
+  return {
+    schema_version: 1,
+    project_id: 'demo_project',
+    diagnosis_id: 'diag-demo',
+    created_at: '2026-01-01T09:04:00Z',
+    status: 'improved',
+    changes: [
+      {
+        finding_id: 'f1',
+        test_file: 'generated_tests/test_calculator.py',
+        test_function: 'test_add',
+        status: 'improved',
+        reason: 'Fixed assertion',
+        before: 'assert add(1, 2) == 5',
+        after: 'assert add(1, 2) == 3',
+      },
+    ],
+    files_modified: 1,
+    warnings: [],
+    ...overrides,
+  }
+}
+
+function appliedRepairFixture(
+  overrides: Partial<RepairResult> = {},
+): RepairResult {
+  return {
+    schema_version: 1,
+    project_id: 'demo_project',
+    status: 'applied',
+    retest_diagnosis_id: 'diag-demo',
+    attempts: [],
+    selected_candidate: null,
+    approval_state: 'approved',
+    application_state: 'applied',
+    final_validation: { status: 'passed', execution_result: null, reason: '' },
+    baseline_statuses: {},
+    target_test_functions: [],
+    warnings: [],
+    reasons: [],
+    created_at: '2026-01-01T09:05:00Z',
+    ...overrides,
+  }
+}
 
 function projectDetailsFixture(
   overrides: Partial<ProjectDetails> = {},

@@ -51,6 +51,11 @@ export function StageHistory({ records }: StageHistoryProps) {
               Started {formatTimestamp(record.start_time)} · Ended{' '}
               {formatTimestamp(record.end_time)}
             </p>
+            {record.result_id !== '' && (
+              <p className="mt-1 text-sm text-slate-300">
+                Result: {record.result_id}
+              </p>
+            )}
             {record.reason !== '' && (
               <p className="mt-1 text-sm text-slate-300">
                 Reason: {record.reason}

@@ -1,4 +1,5 @@
-import { AUTO_PIPELINE_STAGES, STAGE_LABELS, stageKeyFromCurrentStage } from '../api/labels'
+import { AUTO_PIPELINE_STAGES, STAGE_LABELS, overallStatusLabel, stageKeyFromCurrentStage } from '../api/labels'
+import type { PipelineOverallStatus } from '../api/types'
 
 type StepState = 'done' | 'active' | 'pending'
 
@@ -17,11 +18,15 @@ const STEP_STATE_CLASS: Record<StepState, string> = {
 interface PipelineProgressProps {
   currentStage: string
   completedStages: string[]
+  overallStatus?: PipelineOverallStatus
+  userDecisionRequired?: boolean
 }
 
 export function PipelineProgress({
   currentStage,
   completedStages,
+  overallStatus,
+  userDecisionRequired,
 }: PipelineProgressProps) {
   const activeKey = stageKeyFromCurrentStage(currentStage)
   const completed = new Set(completedStages)
@@ -38,6 +43,28 @@ export function PipelineProgress({
 
   return (
     <div>
+      {(overallStatus !== undefined || userDecisionRequired) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {overallStatus !== undefined && (
+            <span
+              role="status"
+              className="rounded-md border border-slate-600/50 bg-slate-700/60 px-2.5 py-1 text-sm"
+              aria-label={`Pipeline outcome: ${overallStatusLabel(overallStatus)}`}
+            >
+              Outcome: {overallStatusLabel(overallStatus)}
+            </span>
+          )}
+          {userDecisionRequired && (
+            <span
+              role="status"
+              className="rounded-md border border-amber-600/40 bg-amber-950/20 px-2.5 py-1 text-sm text-amber-300"
+              aria-label="Pipeline decision gate"
+            >
+              Waiting for a decision
+            </span>
+          )}
+        </div>
+      )}
       <ol className="flex flex-wrap items-center gap-2" aria-label="Pipeline stages">
         {AUTO_PIPELINE_STAGES.map((stage, index) => {
           const state = stepState(stage)

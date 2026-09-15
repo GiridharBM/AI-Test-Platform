@@ -39,14 +39,8 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
   }
 
   return (
-    <div className="rounded-lg border border-amber-600/40 bg-amber-950/20 p-4">
-      <h3 className="text-sm font-semibold text-amber-300">
-        Decision required
-      </h3>
-      {state.reason !== '' && (
-        <p className="mt-1 text-sm text-amber-100/80">{state.reason}</p>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap gap-2">
         {actions.map((action) => (
           <button
             key={action}

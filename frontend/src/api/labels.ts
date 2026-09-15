@@ -114,3 +114,16 @@ export const ACTION_LABELS: Record<PipelineActionName, string> = {
 export function actionLabel(action: string): string {
   return ACTION_LABELS[action as PipelineActionName] ?? action
 }
+
+export const TERMINAL_ERROR_STATUSES: readonly PipelineOverallStatus[] = [
+  'failed',
+  'blocked',
+  'unavailable',
+  'rejected',
+]
+
+export function isTerminalErrorStatus(
+  status: string,
+): status is PipelineOverallStatus {
+  return (TERMINAL_ERROR_STATUSES as readonly string[]).includes(status)
+}

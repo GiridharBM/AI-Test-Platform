@@ -51,4 +51,36 @@ describe('ProjectHeader', () => {
       screen.getByRole('link', { name: /back to dashboard/i }),
     ).toHaveProperty('href', expect.stringMatching(/\/$/))
   })
+
+  it('renders pipeline summary chips when pipeline data is provided', () => {
+    renderHeader({
+      projectId: 'abc123',
+      pipeline: {
+        current_stage: 'profiling',
+        overall_status: 'running',
+        user_decision_required: false,
+      },
+    })
+    expect(screen.getByText('Stage: Profile')).toBeDefined()
+    expect(screen.getByText('Status: Running')).toBeDefined()
+    expect(screen.queryByText('Action required')).toBeNull()
+  })
+
+  it('shows Action required chip when a decision is needed', () => {
+    renderHeader({
+      projectId: 'abc123',
+      pipeline: {
+        current_stage: 'awaiting_retest_decision',
+        overall_status: 'waiting_for_user',
+        user_decision_required: true,
+      },
+    })
+    expect(screen.getByText('Action required')).toBeDefined()
+    expect(screen.getByText('Stage: Awaiting retest decision')).toBeDefined()
+  })
+
+  it('does not render pipeline chips when pipeline is not provided', () => {
+    renderHeader({ projectId: 'abc123' })
+    expect(screen.queryByLabelText('Pipeline summary')).toBeNull()
+  })
 })
