@@ -2,24 +2,38 @@ import { useCallback, useState } from 'react'
 
 import {
   clearLocalProjects,
-  getLocalProjects,
+  readLocalProjects,
   registerLocalProject,
-  type LocalProject,
+  removeLocalProject,
+  type LocalProjectInput,
 } from '../registry/projects'
 
 export function useProjectRegistry() {
-  const [projects, setProjects] = useState<LocalProject[]>(() => getLocalProjects())
+  const [state, setState] = useState(() => readLocalProjects())
 
   const register = useCallback(
-    (project: { id: string; name: string; createdAt?: string }) => {
-      setProjects(registerLocalProject(project))
+    (project: LocalProjectInput) => {
+      const next = registerLocalProject(project)
+      setState({ ...state, projects: next })
     },
-    [],
+    [state],
   )
 
+  const remove = useCallback((id: string) => {
+    const next = removeLocalProject(id)
+    setState({ ...state, projects: next })
+  }, [state])
+
   const clear = useCallback(() => {
-    setProjects(clearLocalProjects())
+    clearLocalProjects()
+    setState({ projects: [], recovered: false })
   }, [])
 
-  return { projects, register, clear }
+  return {
+    projects: state.projects,
+    recovered: state.recovered,
+    register,
+    remove,
+    clear,
+  }
 }

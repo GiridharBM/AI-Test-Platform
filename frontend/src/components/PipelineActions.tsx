@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
 
 import { apiErrorMessage } from '../api/client'
 import { ACTION_LABELS, actionLabel } from '../api/labels'
@@ -16,15 +16,49 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
   const mutation = usePipelineAction(projectId)
   const [confirmingApprove, setConfirmingApprove] = useState(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const approveRef = useRef<HTMLButtonElement>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
   const actions = (state.user_decision_required ? state.available_actions : []).filter(
     (action): action is PipelineActionName => action in ACTION_LABELS,
   )
 
   useEffect(() => {
     if (confirmingApprove) {
+      triggerRef.current = document.activeElement as HTMLElement | null
       cancelRef.current?.focus()
     }
   }, [confirmingApprove])
+
+  function closeApproveDialog() {
+    setConfirmingApprove(false)
+    requestAnimationFrame(() => triggerRef.current?.focus())
+  }
+
+  function trapFocus(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      closeApproveDialog()
+      return
+    }
+    if (event.key !== 'Tab') {
+      return
+    }
+    const focusable = [cancelRef.current, approveRef.current].filter(
+      (el): el is HTMLButtonElement => el !== null,
+    )
+    if (focusable.length === 0) {
+      return
+    }
+    const active = document.activeElement
+    const currentIndex = focusable.indexOf(active as HTMLButtonElement)
+    if (currentIndex === -1) {
+      return
+    }
+    event.preventDefault()
+    const nextIndex = event.shiftKey
+      ? (currentIndex - 1 + focusable.length) % focusable.length
+      : (currentIndex + 1) % focusable.length
+    focusable[nextIndex].focus()
+  }
 
   if (actions.length === 0) {
     return null
@@ -75,11 +109,7 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
           role="dialog"
           aria-modal="true"
           aria-labelledby="approve-dialog-title"
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setConfirmingApprove(false)
-            }
-          }}
+          onKeyDown={trapFocus}
           className="fixed inset-0 z-10 flex items-center justify-center bg-slate-950/70 p-4"
         >
           <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-5">
@@ -102,10 +132,11 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
                 Cancel
               </button>
               <button
+                ref={approveRef}
                 type="button"
                 onClick={() => {
-                  setConfirmingApprove(false)
                   mutation.mutate('approve')
+                  closeApproveDialog()
                 }}
                 disabled={mutation.isPending}
                 className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-amber-500 disabled:opacity-50"

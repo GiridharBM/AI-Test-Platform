@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { apiErrorMessage, ApiError } from '../api/client'
 import { isTerminalErrorStatus } from '../api/labels'
@@ -20,7 +20,8 @@ function apiStatus(error: unknown): number | null {
 
 export function ProjectWorkspacePage() {
   const { id = '' } = useParams<{ id: string }>()
-  const { projects } = useProjectRegistry()
+  const navigate = useNavigate()
+  const { projects, remove: removeSaved } = useProjectRegistry()
   const localProject = projects.find((p) => p.id === id)
 
   const projectQuery = useProject(id)
@@ -128,33 +129,63 @@ export function ProjectWorkspacePage() {
               Project not found.
             </p>
             <p className="mt-1 text-xs text-red-200/70">
-              This project may have been removed.
+              The saved project reference could not be opened — the testing
+              backend does not report a project with this ID. It may be a
+              stale reference from this browser's saved list, or the project
+              was removed on the backend.
             </p>
-            <Link
-              to="/"
-              className="mt-3 inline-block rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-600"
-            >
-              Back to dashboard
-            </Link>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {localProject !== undefined && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    removeSaved(id)
+                    navigate('/')
+                  }}
+                  className="rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-600"
+                >
+                  Remove saved reference and return to Dashboard
+                </button>
+              )}
+              <Link
+                to="/"
+                className="inline-block rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-600"
+              >
+                Back to dashboard
+              </Link>
+            </div>
           </div>
         )}
 
         {projectFailed && !projectNotFound && (
           <div className="rounded-lg border border-red-800/60 bg-red-950/30 p-4">
             <p className="text-sm font-medium text-red-300">
-              Could not load project details.
+              Could not open this project.
+            </p>
+            <p className="mt-1 text-xs text-red-200/70">
+              The saved reference in this browser could not be opened right
+              now. This is a connection or server problem — the project may
+              still exist on the backend.
             </p>
             <p className="mt-1 text-xs text-red-200/70">
               Error: {apiErrorMessage(projectQuery.error)}
             </p>
-            <button
-              type="button"
-              onClick={() => void projectQuery.refetch()}
-              disabled={projectQuery.isFetching}
-              className="mt-3 rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-600 disabled:opacity-50"
-            >
-              Retry
-            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void projectQuery.refetch()}
+                disabled={projectQuery.isFetching}
+                className="rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-600 disabled:opacity-50"
+              >
+                Retry
+              </button>
+              <Link
+                to="/"
+                className="inline-block rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-600"
+              >
+                Back to dashboard
+              </Link>
+            </div>
           </div>
         )}
 

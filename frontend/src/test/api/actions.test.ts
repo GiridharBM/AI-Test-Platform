@@ -97,6 +97,47 @@ describe('pipeline mutation error handling', () => {
     }
   })
 
+  it('rejects an unknown pipeline action with 404, not a fabricated success', async () => {
+    const res = await fetch(
+      '/api/projects/demo_project/pipeline/not_a_real_action',
+      { method: 'POST' },
+    )
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { detail?: unknown }
+    expect(body.detail).toMatch(/Unknown pipeline action/)
+  })
+
+  it('rejects a gate-invalid action with HTTP 409 instead of fabricating a state', async () => {
+    const error = await approveRepair('demo_project').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(ApiError)
+    if (error instanceof ApiError) {
+      expect(error.status).toBe(409)
+      expect(error.isConflict()).toBe(true)
+      expect(error.message).toMatch(/not permitted/)
+    }
+  })
+
+  it('rejects retest when it is not in the project gated actions with 409', async () => {
+    server.use(
+      http.post('/api/projects/:projectId/pipeline/:action', () =>
+        HttpResponse.json({ detail: 'Invalid pipeline gate: action retest not permitted' }, {
+          status: 409,
+        }),
+      ),
+    )
+    const error = await retestPipeline('demo_project').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(ApiError)
+    if (error instanceof ApiError) {
+      expect(error.status).toBe(409)
+    }
+  })
+
   it('wraps network failures as ApiError with null status', async () => {
     server.use(
       http.post('/api/projects/net_bad/pipeline/start', () =>

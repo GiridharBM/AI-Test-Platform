@@ -11,6 +11,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import App from '../../App'
+import { registerLocalProject } from '../../registry/projects'
 import { pipelineFixture, projectDetailsFixture } from '../mocks/handlers'
 import { installMswServer } from '../mocks/install'
 import { server } from '../mocks/server'
@@ -198,6 +199,55 @@ describe('Project workspace — errors', () => {
     expect(
       screen.getAllByRole('link', { name: /back to dashboard/i }).length,
     ).toBeGreaterThan(0)
+  })
+
+  it('shows a useful server error for a failed project read', async () => {
+    server.use(
+      http.get('/api/projects/p500', () =>
+        HttpResponse.json({ detail: 'boom' }, { status: 500 }),
+      ),
+    )
+    renderWorkspace('p500')
+    expect(
+      await screen.findByText(/Could not open this project/i),
+    ).toBeDefined()
+    expect(screen.getByText(/Server error \(500\)/)).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+    expect(
+      screen.getAllByRole('link', { name: /back to dashboard/i }).length,
+    ).toBeGreaterThan(0)
+  })
+
+  it('shows a truthful panel for network failures distinct from a 404', async () => {
+    server.use(
+      http.get('/api/projects/net_proj/pipeline', () =>
+        HttpResponse.error(),
+      ),
+      http.get('/api/projects/net_proj', () => HttpResponse.error()),
+    )
+    renderWorkspace('net_proj')
+    expect(
+      await screen.findByText(/Could not open this project/i),
+    ).toBeDefined()
+    expect(screen.queryByText('Project not found.')).toBeNull()
+    expect(
+      screen.getByText(/connection or server problem/i),
+    ).toBeDefined()
+  })
+
+  it('allows removing a stale saved reference from the not-found panel', async () => {
+    registerLocalProject({ id: 'missing', name: 'Stale Project' })
+    renderWorkspace('missing')
+    expect(await screen.findByText('Project not found.')).toBeDefined()
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /remove saved reference/i }),
+    )
+
+    expect(
+      await screen.findByRole('heading', { name: /dashboard/i }),
+    ).toBeDefined()
+    expect(screen.queryByText('Stale Project')).toBeNull()
   })
 
   it('preserves a 409 conflict as an error, not a success', async () => {

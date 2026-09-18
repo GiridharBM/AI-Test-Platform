@@ -47,17 +47,23 @@ export function UploadProject({ onUploaded }: UploadProjectProps) {
     }
     setUploading(true)
     setError(null)
+    let meta: ProjectMeta | null = null
     try {
-      const meta = await uploadProject(files)
-      setFiles([])
-      if (inputRef.current !== null) {
-        inputRef.current.value = ''
-      }
-      onUploaded?.(meta)
+      meta = await uploadProject(files)
     } catch (err) {
       setError(toUploadErrorMessage(err))
-    } finally {
       setUploading(false)
+      return
+    }
+    setFiles([])
+    if (inputRef.current !== null) {
+      inputRef.current.value = ''
+    }
+    setUploading(false)
+    try {
+      onUploaded?.(meta)
+    } catch {
+      /* no-op */
     }
   }
 

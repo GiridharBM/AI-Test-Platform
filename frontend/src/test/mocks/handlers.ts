@@ -640,6 +640,8 @@ const CONFLICT_DETAIL = {
   detail: 'Invalid pipeline gate: action retest not permitted at awaiting_repair_approval',
 }
 
+const LIVE_PIPELINE_STATUS: Record<string, PipelineOverallStatus> = {}
+
 const ACTION_STATES: Record<string, Partial<PipelineState>> = {
   start: {
     current_stage: 'profile',
@@ -774,10 +776,20 @@ export const handlers = [
     if (projectId === 'conflict') {
       return HttpResponse.json(CONFLICT_DETAIL, { status: 409 })
     }
+    if (ACTION_STATES[action] === undefined) {
+      return HttpResponse.json(
+        { detail: `Unknown pipeline action: ${action}` },
+        { status: 404 },
+      )
+    }
+    if (LIVE_PIPELINE_STATUS[projectId] === 'rejected') {
+      return HttpResponse.json(CONFLICT_DETAIL, { status: 409 })
+    }
     const target = ACTION_STATES[action] ?? {}
     const status =
       (target.overall_status as PipelineOverallStatus | undefined) ??
       'waiting_for_user'
+    LIVE_PIPELINE_STATUS[projectId] = status
     return HttpResponse.json(
       pipelineFixture(status, {
         project_id: projectId,

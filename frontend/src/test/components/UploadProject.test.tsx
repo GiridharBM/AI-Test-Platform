@@ -62,6 +62,26 @@ describe('UploadProject', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/server error/i)
   })
 
+  it('does not report an upload failure when the onUploaded callback throws', async () => {
+    const onUploaded = vi.fn(() => {
+      throw new Error('registration failed')
+    })
+    render(<UploadProject onUploaded={onUploaded} />)
+
+    fireEvent.change(screen.getByLabelText(/project folder/i), {
+      target: { files: [new File(['x'], 'a.py')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }))
+
+    await waitFor(() => {
+      expect(onUploaded).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: 'Uploading…' }),
+    ).toBeNull()
+  })
+
   it('prevents a second submission while the upload is in progress', async () => {
     let release!: () => void
     server.use(
