@@ -103,6 +103,70 @@ describe('ArtifactsTabs', () => {
     expect(within(panel).getByText(/1\.20s/)).toBeDefined()
   })
 
+  it('renders per-test rows with statuses when structured data exists', () => {
+    const project = projectDetailsFixture({
+      execution: {
+        ...projectDetailsFixture().execution!,
+        file_results: [
+          {
+            file_path: 'generated_tests/test_calculator.py',
+            status: 'failed',
+            stdout: '',
+            stderr: '',
+            duration_seconds: 1.2,
+            test_functions: [
+              { test_function: 'test_add', status: 'passed', duration_seconds: null },
+              { test_function: 'test_div', status: 'failed', duration_seconds: null },
+              { test_function: 'test_skip', status: 'skipped', duration_seconds: null },
+            ],
+          },
+        ],
+      },
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Test execution' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText('test_add')).toBeDefined()
+    expect(within(panel).getByText('test_div')).toBeDefined()
+    expect(within(panel).getByText('test_skip')).toBeDefined()
+    expect(within(panel).getAllByText('passed').length).toBeGreaterThan(0)
+    expect(within(panel).getByText('skipped')).toBeDefined()
+  })
+
+  it('shows duration only when actually available per test', () => {
+    const project = projectDetailsFixture({
+      execution: {
+        ...projectDetailsFixture().execution!,
+        file_results: [
+          {
+            file_path: 'generated_tests/test_calculator.py',
+            status: 'passed',
+            stdout: '',
+            stderr: '',
+            duration_seconds: 1.2,
+            test_functions: [
+              { test_function: 'test_fast', status: 'passed', duration_seconds: 0.012 },
+              { test_function: 'test_unknown', status: 'passed', duration_seconds: null },
+            ],
+          },
+        ],
+      },
+    })
+    render(<ArtifactsTabs project={project} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Test execution' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText('0.012s')).toBeDefined()
+    expect(within(panel).queryByText(/^nulls/)).toBeNull()
+  })
+
+  it('gracefully handles old execution artifacts without per-test rows', () => {
+    render(<ArtifactsTabs project={projectDetailsFixture()} />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Test execution' }))
+    const panel = screen.getByRole('tabpanel')
+    expect(within(panel).getByText(/test_calculator\.py/)).toBeDefined()
+    expect(within(panel).getByText('No per-test detail available for this file.')).toBeDefined()
+  })
+
   it('renders diagnosis details when available', () => {
     render(<ArtifactsTabs project={projectDetailsFixture()} />)
     fireEvent.click(screen.getByRole('tab', { name: 'Diagnosis' }))

@@ -217,6 +217,9 @@ function ExecutionDetail({ project }: { project: ProjectDetails }) {
   const exec = project.execution
   if (!exec) return null
   const s = exec.summary
+  const filesWithTests = exec.file_results.some(
+    (fr) => (fr.test_functions ?? []).length > 0,
+  )
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap gap-4">
@@ -242,8 +245,52 @@ function ExecutionDetail({ project }: { project: ProjectDetails }) {
         <ul className="list-inside list-disc space-y-1">
           {exec.file_results.map((fr, i) => (
             <li key={i}>
-              <span className="text-slate-300">{fr.file_path}</span>{' '}
-              <span className="text-slate-500">({fr.status})</span>
+              <details
+                className="rounded-md border border-slate-700 bg-slate-900"
+                open={filesWithTests && fr.status === 'failed'}
+              >
+                <summary className="cursor-pointer p-2">
+                  <span className="font-mono text-xs text-slate-200">{fr.file_path}</span>{' '}
+                  <span className="text-slate-500">({fr.status})</span>
+                  {(fr.test_functions ?? []).length > 0 && (
+                    <span className="ml-1 text-xs text-slate-500">
+                      {fr.test_functions?.length} test{fr.test_functions?.length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </summary>
+                {(fr.test_functions ?? []).length > 0 ? (
+                  <ul className="space-y-1 px-3 pb-3">
+                    {fr.test_functions?.map((tf) => (
+                      <li key={tf.test_function} className="flex items-center gap-2">
+                        <span
+                          className={
+                            tf.status === 'passed'
+                              ? 'text-emerald-400'
+                              : tf.status === 'failed' || tf.status === 'error'
+                                ? 'text-red-400'
+                                : 'text-slate-500'
+                          }
+                        >
+                          {tf.status}
+                        </span>
+                        <span className="font-mono text-xs text-slate-300">
+                          {tf.test_function}
+                        </span>
+                        {tf.duration_seconds !== null &&
+                          tf.duration_seconds !== undefined && (
+                            <span className="text-xs text-slate-500">
+                              {tf.duration_seconds.toFixed(3)}s
+                            </span>
+                          )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="px-3 pb-3 text-xs text-slate-500">
+                    No per-test detail available for this file.
+                  </p>
+                )}
+              </details>
             </li>
           ))}
         </ul>

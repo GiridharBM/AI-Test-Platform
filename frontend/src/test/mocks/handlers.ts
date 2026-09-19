@@ -1,4 +1,5 @@
 import { http, HttpResponse } from 'msw'
+import type { JsonBodyType } from 'msw'
 
 import type {
   PipelineOverallStatus,
@@ -15,6 +16,7 @@ import type {
   TestPlan,
   TestGenerationResult,
   ImprovementResult,
+  ResultsDigest,
   StageRecord,
   StageStatus,
 } from '../../api/types'
@@ -192,12 +194,173 @@ const PIPELINE_BY_ID: Record<string, Partial<PipelineState>> = {
 
 export {
   projectDetailsFixture,
+  resultsDigestFixture,
   stageHistoryStep,
   codemapFixture,
   testPlanFixture,
   testGenerationFixture,
   improvementFixture,
   appliedRepairFixture,
+  EXPORT_ZIP_BYTES,
+}
+
+function resultsDigestFixture(
+  overrides: Partial<ResultsDigest> = {},
+): ResultsDigest {
+  return {
+    schema_version: 1,
+    project_id: 'demo_project',
+    created_at: '2026-01-01T09:15:00Z',
+    overall_verdict: 'failed',
+    reason: 'Test execution failed.',
+    pipeline_status: 'completed',
+    pipeline_current_stage: 'completed',
+    execution_status: 'failed',
+    execution_duration_seconds: 1.2,
+    test_counts: {
+      total_files: 1,
+      total_test_functions: 2,
+      passed: 0,
+      failed: 1,
+      errors: 1,
+      skipped: 0,
+    },
+    diagnosis_status: 'failures_diagnosed',
+    failing_tests: [
+      {
+        test_file: 'generated_tests/test_calculator.py',
+        test_function: 'test_add',
+        status: 'failed',
+        category: 'assertion',
+        severity: 'high',
+        exception_type: 'AssertionError',
+        message: 'expected 4 got 5',
+        source_file: 'calculator.py',
+        source_line_start: 3,
+        source_line_end: 3,
+        source_qualified_name: 'add',
+      },
+    ],
+    improvement_status: 'improved',
+    improvement_changes: 1,
+    improvement_files_modified: 1,
+    retest_status: 'still_failing',
+    repair: {
+      status: 'validated_pending_approval',
+      approval_state: 'pending',
+      application_state: 'not_applied',
+      final_validation_status: 'not_run',
+      final_validation_reason: '',
+      selected_operation: 'replace binop body',
+      selected_file_path: 'calculator.py',
+      selected_source_location: 'L3-3',
+      selected_rationale: 'test_add expects the sum',
+      confirmed_repair: false,
+      reasons: ['A validated candidate awaits explicit approval.'],
+    },
+    evaluation: {
+      status: 'completed',
+      coverage_status: 'completed',
+      line_coverage_percentage: 66.7,
+      mutation_status: 'completed',
+      mutation_score: 75,
+      benchmark_status: 'completed',
+      benchmark_median_seconds: 1.15,
+    },
+    warnings: [],
+    ...overrides,
+  }
+}
+
+const DIGEST_BY_ID: Record<string, Partial<ResultsDigest>> = {
+  r_complete: {
+    overall_verdict: 'passed',
+    reason: 'Source repair applied and final validation passed.',
+    execution_status: 'passed',
+    test_counts: {
+      total_files: 1,
+      total_test_functions: 2,
+      passed: 2,
+      failed: 0,
+      errors: 0,
+      skipped: 0,
+    },
+    failing_tests: [],
+    repair: {
+      status: 'applied',
+      approval_state: 'approved',
+      application_state: 'applied',
+      final_validation_status: 'passed',
+      final_validation_reason: 'All repaired tests pass.',
+      selected_operation: 'replace binop body',
+      selected_file_path: 'calculator.py',
+      selected_source_location: 'L3-3',
+      selected_rationale: 'test_add expects the sum',
+      confirmed_repair: true,
+      reasons: [],
+    },
+  },
+  r_partial: {
+    overall_verdict: 'no_execution',
+    reason: 'No test execution has run yet.',
+    execution_status: null,
+    execution_duration_seconds: null,
+    test_counts: null,
+    diagnosis_status: null,
+    failing_tests: [],
+    improvement_status: null,
+    retest_status: null,
+    repair: null,
+    evaluation: null,
+  },
+  r_failing: {
+    overall_verdict: 'failed',
+    reason: 'Test execution failed.',
+    execution_status: 'failed',
+    test_counts: {
+      total_files: 1,
+      total_test_functions: 2,
+      passed: 0,
+      failed: 2,
+      errors: 0,
+      skipped: 0,
+    },
+    diagnosis_status: 'failures_diagnosed',
+    failing_tests: [
+      {
+        test_file: 'generated_tests/test_calculator.py',
+        test_function: 'test_add',
+        status: 'failed',
+        category: 'assertion',
+        severity: 'high',
+        exception_type: 'AssertionError',
+        message: 'expected 4 got 5',
+        source_file: 'calculator.py',
+        source_line_start: 3,
+        source_line_end: 3,
+        source_qualified_name: 'add',
+      },
+      {
+        test_file: 'generated_tests/test_calculator.py',
+        test_function: 'test_sub',
+        status: 'failed',
+        category: 'assertion',
+        severity: 'medium',
+        exception_type: 'AssertionError',
+        message: 'expected 1 got 3',
+        source_file: 'calculator.py',
+        source_line_start: 6,
+        source_line_end: 6,
+        source_qualified_name: 'subtract',
+      },
+    ],
+    improvement_status: 'no_change',
+    improvement_changes: 0,
+    improvement_files_modified: 0,
+    retest_status: 'still_failing',
+    repair: null,
+    evaluation: null,
+  },
 }
 
 function codemapFixture(overrides: Partial<CodeMap> = {}): CodeMap {
@@ -640,6 +803,28 @@ const CONFLICT_DETAIL = {
   detail: 'Invalid pipeline gate: action retest not permitted at awaiting_repair_approval',
 }
 
+// Minimal valid ZIP (one entry, hello.txt) so export consumer code sees a
+// real archive, never a generic JSON success body. Byte-exact fixture.
+const EXPORT_ZIP_BYTES = new Uint8Array([
+  80, 75, 3, 4, 20, 0, 0, 0, 8, 0, 137, 110, 50, 93, 172, 42, 147, 216, 4, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0, 104, 101, 108, 108, 111, 46, 116, 120, 116, 203, 200, 4, 0, 80, 75, 1, 2, 20, 0, 20, 0, 0, 0, 8, 0, 137, 110, 50, 93, 172, 42, 147, 216, 4, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 1, 0, 0, 0, 0, 104, 101, 108, 108, 111, 46, 116, 120, 116, 80, 75, 5, 6, 0, 0, 0, 0, 1, 0, 1, 0, 55, 0, 0, 0, 43, 0, 0, 0, 0, 0,
+])
+
+const EXPORT_ERRORS: Record<string, HttpResponse<JsonBodyType>> = {
+  path_origin: HttpResponse.json(
+    { detail: 'Export is supported only for upload-origin projects.' },
+    { status: 400 },
+  ),
+  missing: HttpResponse.json({ detail: 'Unknown project: missing' }, { status: 404 }),
+  not_completed: HttpResponse.json(
+    { detail: `Export requires overall_status='completed' (found 'running').` },
+    { status: 409 },
+  ),
+  running_export: HttpResponse.json(
+    { detail: `Export requires overall_status='completed' (found 'running').` },
+    { status: 409 },
+  ),
+}
+
 const LIVE_PIPELINE_STATUS: Record<string, PipelineOverallStatus> = {}
 
 const ACTION_STATES: Record<string, Partial<PipelineState>> = {
@@ -763,6 +948,38 @@ export const handlers = [
       pipelineFixture('waiting_for_user', {
         project_id: projectId,
         pipeline_id: projectId,
+      }),
+    )
+  }),
+
+  http.get('/api/projects/:projectId/export', ({ params }) => {
+    const projectId = String(params.projectId)
+    const failure = EXPORT_ERRORS[projectId]
+    if (failure !== undefined) {
+      return failure
+    }
+    return new HttpResponse(EXPORT_ZIP_BYTES, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${projectId}-export.zip"`,
+      },
+    })
+  }),
+
+  http.get('/api/projects/:projectId/results', ({ params }) => {
+    const projectId = String(params.projectId)
+    if (projectId === 'missing') {
+      return HttpResponse.json(NOT_FOUND_DETAIL, { status: 404 })
+    }
+    if (projectId === 'malformed') {
+      return HttpResponse.text('this is not json', { status: 200 })
+    }
+    const byId = DIGEST_BY_ID[projectId]
+    return HttpResponse.json(
+      resultsDigestFixture({
+        project_id: projectId,
+        ...(byId ?? {}),
       }),
     )
   }),

@@ -307,12 +307,19 @@ export type ExecutionStatus =
   | 'timeout'
   | 'unavailable'
 
+export interface TestFunctionResult {
+  test_function: string
+  status: string
+  duration_seconds: number | null
+}
+
 export interface TestFileResult {
   file_path: string
   status: string
   stdout: string
   stderr: string
   duration_seconds: number
+  test_functions?: TestFunctionResult[]
 }
 
 export interface ExecutionSummary {
@@ -657,4 +664,82 @@ export interface ProjectDetails extends ProjectMeta {
   retest: ReTestResult | null
   evaluation: EvaluationResult | null
   repair: RepairResult | null
+}
+
+export type DigestVerdict =
+  | 'passed'
+  | 'failed'
+  | 'no_execution'
+  | 'blocked'
+  | 'unavailable'
+  | 'repair_pending'
+  | 'rejected'
+
+export interface DigestTestCounts {
+  total_files: number
+  total_test_functions: number
+  passed: number
+  failed: number
+  errors: number
+  skipped: number
+}
+
+export interface DigestFailingTest {
+  test_file: string
+  test_function: string
+  status: string
+  category: string
+  severity: string
+  exception_type: string
+  message: string
+  source_file: string
+  source_line_start: number | null
+  source_line_end: number | null
+  source_qualified_name: string
+}
+
+export interface DigestRepairState {
+  status: string
+  approval_state: string
+  application_state: string
+  final_validation_status: string
+  final_validation_reason: string
+  selected_operation: string
+  selected_file_path: string
+  selected_source_location: string
+  selected_rationale: string
+  confirmed_repair: boolean
+  reasons: string[]
+}
+
+export interface DigestEvaluationState {
+  status: string
+  coverage_status: string
+  line_coverage_percentage: number | null
+  mutation_status: string
+  mutation_score: number | null
+  benchmark_status: string
+  benchmark_median_seconds: number | null
+}
+
+export interface ResultsDigest {
+  schema_version: number
+  project_id: string
+  created_at: string
+  overall_verdict: DigestVerdict
+  reason: string
+  pipeline_status: string | null
+  pipeline_current_stage: string | null
+  execution_status: string | null
+  execution_duration_seconds: number | null
+  test_counts: DigestTestCounts | null
+  diagnosis_status: string | null
+  failing_tests: DigestFailingTest[]
+  improvement_status: string | null
+  improvement_changes: number | null
+  improvement_files_modified: number | null
+  retest_status: string | null
+  repair: DigestRepairState | null
+  evaluation: DigestEvaluationState | null
+  warnings: string[]
 }

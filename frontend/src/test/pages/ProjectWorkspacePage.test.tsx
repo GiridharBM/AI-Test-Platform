@@ -431,4 +431,41 @@ describe('Project workspace — artifact navigation', () => {
     ).toBeTruthy()
   })
 })
+
+describe('Project workspace — results digest', () => {
+  it('renders the Results section above the Artifacts section', async () => {
+    renderWorkspace('p_completed')
+    const results = await screen.findByRole('region', { name: 'Results' })
+    const artifacts = await screen.findByRole('region', { name: 'Artifacts' })
+    expect(
+      results.compareDocumentPosition(artifacts) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('renders the digest verdict without duplicating full artifact contents', async () => {
+    renderWorkspace('r_complete')
+    await screen.findByText('Passed')
+    expect(screen.getByText('Source repair applied and final validation passed.')).toBeDefined()
+    expect(screen.getAllByRole('region', { name: 'Execution' }).length).toBe(1)
+  })
+
+  it('omits sections for artifacts that do not exist (explicit unavailable)', async () => {
+    renderWorkspace('r_partial')
+    await screen.findByText('No execution yet')
+    expect(screen.queryByRole('region', { name: 'Diagnosis' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Execution' })).toBeNull()
+    expect(screen.queryByText('Repair target:')).toBeNull()
+  })
+
+  it('shows the error state for a results fetch failure', async () => {
+    server.use(
+      http.get('/api/projects/boom/results', () =>
+        HttpResponse.json({ detail: 'boom' }, { status: 500 }),
+      ),
+    )
+    renderWorkspace('boom')
+    expect(await screen.findByText('Could not load results.')).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+  })
+})
 })

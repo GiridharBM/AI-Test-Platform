@@ -4,10 +4,14 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.core import config
 from app.models.pipeline import PipelineState
 from app.models.project import LocalPathRequest, ProjectDetails, ProjectMeta, ProjectProfile
+from app.models.results import ResultsDigest
+from app.services import project_export
 from app.services import project_ingestion as ingestion
 from app.services import project_profiler as profiler
 from app.services import project_discovery as discovery
@@ -483,6 +487,40 @@ def pipeline_reject(project_id: str):
         return pipeline_service.decide_reject(project_id)
     except pipeline_service.PipelineGateError as exc:
         raise _pipeline_gate_error(exc)
+
+
+@router.get("/{project_id}/export")
+def export_project(project_id: str):
+    """Download a completed upload-origin project as a ZIP (M12).
+
+    The archive contains the authoritative workspace source tree plus a
+    PROJECT_EXPORT.json manifest. Read-only: never mutates source, .meta,
+    pipeline, or repair state. Gated to ``overall_status == 'completed'``;
+    unknown/traversal ids are 404, path-origin projects are 400, and any
+    non-completed pipeline is 409.
+    """
+    zip_path, filename = project_export.build_project_zip(project_id)
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(project_export.cleanup_export_zip, zip_path),
+    )
+
+
+@router.get("/{project_id}/results", response_model=ResultsDigest)
+def get_project_results(project_id: str) -> ResultsDigest:
+    """Return a read-only results digest for a project (M13).
+
+    Derives a bounded, developer-friendly summary of the testing outcome from
+    the persisted .meta artifacts. Never mutates state, never exposes source or
+    test contents, full tracebacks, host/sandbox paths, environment variables,
+    or secrets. Unknown projects are 404; missing/partial artifacts render as
+    explicit null/unavailable sections rather than fabricated states.
+    """
+    from app.services.results import build_results_digest
+
+    return build_results_digest(project_id)
 
 
 @router.get("/{project_id}", response_model=ProjectDetails)

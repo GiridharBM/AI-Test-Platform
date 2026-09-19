@@ -47,6 +47,46 @@ export function postForm<T>(path: string, formData: FormData): Promise<T> {
   })
 }
 
+export interface BlobResult {
+  blob: Blob
+  filename: string | null
+}
+
+export async function getBlob(path: string): Promise<BlobResult> {
+  let res: Response
+  try {
+    res = await fetch(path, { headers: { Accept: 'application/zip' } })
+  } catch (err) {
+    throw new ApiError(
+      err instanceof Error ? err.message : 'Network error',
+      null,
+      undefined,
+    )
+  }
+
+  if (!res.ok) {
+    let body: Json
+    try {
+      body = await parseJsonBody(res)
+    } catch {
+      body = undefined
+    }
+    const message = messageFromDetail(body) ?? `Request failed with status ${res.status}`
+    throw new ApiError(message, res.status, body)
+  }
+
+  const blob = await res.blob()
+  return { blob, filename: filenameFromContentDisposition(res.headers.get('Content-Disposition')) }
+}
+
+function filenameFromContentDisposition(value: string | null): string | null {
+  if (value === null) {
+    return null
+  }
+  const match = /filename="?([^";]+)"?/.exec(value)
+  return match !== null ? match[1] : null
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {

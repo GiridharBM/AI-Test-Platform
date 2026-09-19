@@ -9,6 +9,7 @@ import { ErrorPanel } from '../components/ErrorPanel'
 import { PipelineProgress } from '../components/PipelineProgress'
 import { PipelineStatus } from '../components/PipelineStatus'
 import { ProjectHeader } from '../components/ProjectHeader'
+import { ResultsDigest } from '../components/ResultsDigest'
 import { StageHistory } from '../components/StageHistory'
 import { usePipeline } from '../hooks/usePipeline'
 import { useProject } from '../hooks/useProject'
@@ -112,6 +113,11 @@ export function ProjectWorkspacePage() {
             )}
           </>
         )}
+      </section>
+
+      <section aria-label="Results" className="space-y-3">
+        <h2 className="text-lg font-semibold">Results</h2>
+        <ResultsDigest projectId={id} />
       </section>
 
       <section aria-label="Artifacts" className="space-y-3">

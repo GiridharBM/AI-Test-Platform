@@ -13,6 +13,7 @@ from app.execution.runner import (
     _ensure_image,
     _parse_file_results,
     _parse_pytest_output,
+    _parse_test_functions,
     execute_tests,
 )
 from app.models.execution import (
@@ -24,11 +25,71 @@ from app.models.execution import (
     ExecutionSummary,
     TestExecutionResult,
     TestFileResult,
+    TestFunctionResult,
     VALID_STATUSES,
 )
 
 
 # ── Model tests ──────────────────────────────────────────────────────
+
+class TestFunctionResultModel:
+    def test_valid_result(self):
+        r = TestFunctionResult(test_function="test_a", status="passed")
+        assert r.test_function == "test_a"
+        assert r.status == "passed"
+        assert r.duration_seconds is None
+
+    def test_with_duration(self):
+        r = TestFunctionResult(test_function="test_slow", status="passed", duration_seconds=1.25)
+        assert r.duration_seconds == 1.25
+
+    def test_serialization_roundtrip(self):
+        r = TestFunctionResult(test_function="test_x", status="failed")
+        r2 = TestFunctionResult.model_validate(r.model_dump())
+        assert r2.test_function == "test_x"
+        assert r2.status == "failed"
+        assert r2.duration_seconds is None
+
+    def test_deserialization_from_json(self):
+        import json
+        raw = json.dumps({"test_function": "f", "status": "skipped"})
+        r = TestFunctionResult.model_validate_json(raw)
+        assert r.test_function == "f"
+        assert r.status == "skipped"
+
+    def test_within_file_result_defaults_empty(self):
+        fr = TestFileResult(file_path="a.py", status="passed")
+        assert fr.test_functions == []
+
+    def test_within_file_result_roundtrip(self):
+        fr = TestFileResult(
+            file_path="a.py",
+            status="failed",
+            test_functions=[
+                TestFunctionResult(test_function="t1", status="passed"),
+                TestFunctionResult(test_function="t2", status="failed"),
+            ],
+        )
+        data = fr.model_dump()
+        fr2 = TestFileResult.model_validate(data)
+        assert len(fr2.test_functions) == 2
+        assert fr2.test_functions[0].test_function == "t1"
+        assert fr2.test_functions[1].status == "failed"
+
+    def test_backward_compatibility_old_artifact(self):
+        """Legacy TestFileResult payloads (no test_functions) must still validate."""
+        import json
+        old = json.dumps({
+            "file_path": "old.py",
+            "status": "failed",
+            "stdout": "o",
+            "stderr": "e",
+            "duration_seconds": 1.0,
+        })
+        fr = TestFileResult.model_validate_json(old)
+        assert fr.test_functions == []
+        assert fr.status == "failed"
+
 
 class TestFileResultModel:
     def test_valid_result(self):
@@ -204,6 +265,79 @@ class TestParseFileResults:
         )
         files = _parse_file_results(stdout)
         assert files["tests/test_calculator.py"] == "failed"
+
+
+# ── Per-test function parser tests ───────────────────────────────────
+
+class TestParseTestFunctions:
+    def test_passed_rows(self):
+        stdout = (
+            "tests/test_a.py::test_1 PASSED\n"
+            "tests/test_a.py::test_2 PASSED\n"
+            "2 passed in 0.10s\n"
+        )
+        rows = _parse_test_functions(stdout)
+        assert list(rows.keys()) == ["tests/test_a.py"]
+        funcs = rows["tests/test_a.py"]
+        assert len(funcs) == 2
+        assert funcs[0].test_function == "test_1"
+        assert funcs[0].status == "passed"
+        assert funcs[0].duration_seconds is None
+        assert funcs[1].test_function == "test_2"
+
+    def test_failed_rows(self):
+        stdout = (
+            "tests/test_a.py::test_1 FAILED\n"
+            "tests/test_a.py::test_2 ERROR\n"
+        )
+        rows = _parse_test_functions(stdout)
+        funcs = rows["tests/test_a.py"]
+        assert funcs[0].status == "failed"
+        assert funcs[1].status == "error"
+
+    def test_skipped_rows(self):
+        stdout = "tests/test_x.py::test_skip SKIPPED\n"
+        rows = _parse_test_functions(stdout)
+        assert rows["tests/test_x.py"][0].status == "skipped"
+
+    def test_multiple_files(self):
+        stdout = (
+            "tests/test_a.py::test_1 PASSED\n"
+            "tests/test_b.py::test_2 FAILED\n"
+        )
+        rows = _parse_test_functions(stdout)
+        assert set(rows.keys()) == {"tests/test_a.py", "tests/test_b.py"}
+        assert rows["tests/test_b.py"][0].status == "failed"
+
+    def test_preserves_order(self):
+        stdout = (
+            "tests/test_a.py::test_last PASSED\n"
+            "tests/test_a.py::test_first PASSED\n"
+        )
+        rows = _parse_test_functions(stdout)
+        names = [f.test_function for f in rows["tests/test_a.py"]]
+        assert names == ["test_last", "test_first"]
+
+    def test_real_pytest_progress_column(self):
+        stdout = (
+            "tests/test_calculator.py::test_add PASSED [ 33%]\n"
+            "tests/test_calculator.py::test_divide FAILED [ 66%]\n"
+            "tests/test_calculator.py::test_even FAILED [100%]\n"
+        )
+        rows = _parse_test_functions(stdout)
+        funcs = rows["tests/test_calculator.py"]
+        assert len(funcs) == 3
+        assert funcs[0].status == "passed"
+        assert funcs[1].status == "failed"
+
+    def test_no_duration_fabricated(self):
+        """pytest -v gives no per-test duration; rows must carry None, never 0.0."""
+        stdout = "tests/test_a.py::test_1 PASSED\n"
+        rows = _parse_test_functions(stdout)
+        assert rows["tests/test_a.py"][0].duration_seconds is None
+
+    def test_empty_output(self):
+        assert _parse_test_functions("") == {}
 
 
 # ── Runner tests (Docker mocked) ─────────────────────────────────────
@@ -398,7 +532,40 @@ class TestExecuteTestsFileResults:
     @patch("app.execution.runner._docker_available", return_value=True)
     @patch("app.execution.runner._ensure_image")
     @patch("app.execution.runner.subprocess.run")
-    def test_calculator_verbose_output_end_to_end(self, mock_run, _mock_img, _mock_docker, tmp_path):
+    def test_per_test_rows_wired_into_file_results(self, mock_run, _mock_img, _mock_docker, tmp_path):
+        """Structured per-test rows (incl. passed tests) must reach TestFileResult."""
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_calculator.py").write_text("# calculator")
+
+        stdout = (
+            "tests/test_calculator.py::test_add PASSED [ 33%]\n"
+            "tests/test_calculator.py::test_divide FAILED [ 66%]\n"
+            "tests/test_calculator.py::test_skip SKIPPED [100%]\n"
+            "1 passed, 1 failed, 1 skipped in 0.4s\n"
+        )
+        mock_run.return_value = MagicMock(returncode=1, stdout=stdout.encode(), stderr=b"")
+        result = execute_tests(test_dir, "proj123")
+
+        assert len(result.file_results) == 1
+        fr = result.file_results[0]
+        assert fr.status == "failed"  # worst per-file status preserved
+
+        funcs = {f.test_function: f.status for f in fr.test_functions}
+        assert funcs == {
+            "test_add": "passed",
+            "test_divide": "failed",
+            "test_skip": "skipped",
+        }
+        # Aggregate counters preserved and consistent with per-test rows.
+        assert result.summary.passed == 1
+        assert result.summary.failed == 1
+        assert result.summary.skipped == 1
+
+    @patch("app.execution.runner._docker_available", return_value=True)
+    @patch("app.execution.runner._ensure_image")
+    @patch("app.execution.runner.subprocess.run")
+    def test_multiple_tests_in_one_file(self, mock_run, _mock_img, _mock_docker, tmp_path):
         """Real pytest -v output (one passed, two failed) must produce
         non-zero structured counts and correct per-file statuses."""
         test_dir = tmp_path / "tests"

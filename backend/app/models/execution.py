@@ -5,6 +5,7 @@ inside a Docker sandbox. Pure deterministic execution — no LLM, no AI.
 """
 
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,14 +18,33 @@ STATUS_UNAVAILABLE = "unavailable"
 VALID_STATUSES = {STATUS_PASSED, STATUS_FAILED, STATUS_ERROR, STATUS_TIMEOUT, STATUS_UNAVAILABLE}
 
 
+class TestFunctionResult(BaseModel):
+    """Structured result of a single test function within a test file.
+
+    `duration_seconds` is only populated when pytest actually reports it;
+    `None` means the duration was not available, never a fabricated zero.
+    """
+
+    test_function: str
+    status: str  # STATUS_PASSED | STATUS_FAILED | STATUS_ERROR | "skipped"
+    duration_seconds: Optional[float] = None
+
+
 class TestFileResult(BaseModel):
-    """Result of executing a single test file."""
+    """Result of executing a single test file.
+
+    `test_functions` holds one entry per test function parsed from the pytest
+    output, when per-test parsing was possible. Older persisted artifacts
+    (without per-test rows) remain valid: the field is optional and defaults
+    to an empty list.
+    """
 
     file_path: str
     status: str  # STATUS_PASSED | STATUS_FAILED | STATUS_ERROR
     stdout: str = ""
     stderr: str = ""
     duration_seconds: float = 0.0
+    test_functions: list[TestFunctionResult] = Field(default_factory=list)
 
 
 class ExecutionSummary(BaseModel):

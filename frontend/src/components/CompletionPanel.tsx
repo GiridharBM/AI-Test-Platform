@@ -1,4 +1,6 @@
+import { apiErrorMessage } from '../api/client'
 import type { ProjectDetails } from '../api/types'
+import { useProjectExport } from '../hooks/useProjectExport'
 
 interface CompletionPanelProps {
   project: ProjectDetails
@@ -6,6 +8,7 @@ interface CompletionPanelProps {
 
 export function CompletionPanel({ project }: CompletionPanelProps) {
   const repair = project.repair
+  const exportMutation = useProjectExport(project.project_id)
 
   return (
     <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-4">
@@ -39,6 +42,28 @@ export function CompletionPanel({ project }: CompletionPanelProps) {
             </li>
           )}
         </ul>
+      )}
+
+      {project.origin === 'upload' && (
+        <div className="mt-3 border-t border-emerald-800/40 pt-3">
+          <p className="text-xs text-slate-300">
+            Download the repaired project — a copy saved in the platform
+            workspace. Your original upload is untouched.
+          </p>
+          <button
+            type="button"
+            onClick={() => exportMutation.mutate()}
+            disabled={exportMutation.isPending}
+            className="mt-2 rounded-md bg-emerald-700 px-3 py-1.5 text-sm text-white hover:bg-emerald-600 disabled:opacity-50"
+          >
+            {exportMutation.isPending ? 'Exporting…' : 'Download project export'}
+          </button>
+          {exportMutation.isError && (
+            <p className="mt-2 text-xs text-red-300">
+              Export failed: {apiErrorMessage(exportMutation.error)}
+            </p>
+          )}
+        </div>
       )}
     </div>
   )

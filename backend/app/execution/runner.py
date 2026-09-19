@@ -25,6 +25,7 @@ from app.models.execution import (
     STATUS_UNAVAILABLE,
     TestExecutionResult,
     TestFileResult,
+    TestFunctionResult,
 )
 
 
@@ -338,6 +339,36 @@ def _parse_file_results(stdout: str) -> dict[str, str]:
     return files
 
 
+# Per-test status line in pytest -v output (after stripping the trailing
+# " [ 33%]" progress column): "<file>::<func> STATUS".
+_TEST_STATUS_RE = re.compile(
+    r"^(?P<file>\S+)::(?P<func>[^\s]+)\s+(?P<status>PASSED|FAILED|ERROR|SKIPPED)$"
+)
+
+
+def _parse_test_functions(stdout: str) -> dict[str, list[TestFunctionResult]]:
+    """Parse pytest -v output into file → ordered list of per-test results.
+
+    Parses actual status tokens from pytest output; passed tests are included
+    as real rows, never derived from aggregate counts. pytest -v reports no
+    per-test duration, so `duration_seconds` stays None rather than inventing
+    one. Returns {} when the output has no parseable per-test lines.
+    """
+    results: dict[str, list[TestFunctionResult]] = {}
+    for line in stdout.splitlines():
+        clean = _PROGRESS_RE.sub("", line.rstrip()).rstrip()
+        match = _TEST_STATUS_RE.match(clean)
+        if not match:
+            continue
+        file_path = match.group("file")
+        func = match.group("func")
+        status = match.group("status").lower()
+        results.setdefault(file_path, []).append(
+            TestFunctionResult(test_function=func, status=status)
+        )
+    return results
+
+
 def execute_tests(
     generated_test_dir: Path,
     project_id: str,
@@ -440,12 +471,14 @@ def execute_tests(
 
         passed, failed, errors_count, skipped, total = _parse_pytest_output(stdout)
         file_statuses = _parse_file_results(stdout)
+        per_test = _parse_test_functions(stdout)
 
         file_results = []
         for fpath in sorted(file_statuses.keys()):
             file_results.append(TestFileResult(
                 file_path=fpath,
                 status=file_statuses[fpath],
+                test_functions=per_test.get(fpath, []),
             ))
 
         if returncode == 0:

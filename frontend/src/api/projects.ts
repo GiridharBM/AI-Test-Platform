@@ -1,4 +1,5 @@
-import { get, postForm } from './client'
+import { get, getBlob, postForm } from './client'
+import type { BlobResult } from './client'
 import type { PipelineState, ProjectDetails, ProjectMeta } from './types'
 
 export const projectKeys = {
@@ -8,6 +9,10 @@ export const projectKeys = {
 
 export function getProject(projectId: string): Promise<ProjectDetails> {
   return get<ProjectDetails>(`/api/projects/${encodeURIComponent(projectId)}`)
+}
+
+export function downloadProjectExport(projectId: string): Promise<BlobResult> {
+  return getBlob(`/api/projects/${encodeURIComponent(projectId)}/export`)
 }
 
 export function getPipeline(projectId: string): Promise<PipelineState> {
