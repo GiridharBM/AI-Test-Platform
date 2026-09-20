@@ -654,6 +654,15 @@ export interface ProjectMeta {
   profiled: boolean
 }
 
+export interface ProjectSummary {
+  project_id: string
+  name: string
+  origin: OriginMode
+  file_count: number | null
+  created_at: string
+  profiled: boolean
+}
+
 export interface ProjectDetails extends ProjectMeta {
   profile: ProjectProfile | null
   codemap: CodeMap | null

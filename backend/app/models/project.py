@@ -122,6 +122,22 @@ class ProjectMeta(BaseModel):
     profiled: bool = False
 
 
+class ProjectSummary(BaseModel):
+    """Safe index-entry metadata for GET /api/projects.
+
+    Field-for-field: ProjectMeta minus ``source_path`` (an absolute local
+    path that must never be exposed through the index). Mirrors the exact
+    field names/types of ProjectMeta so consumers can treat it as a subset.
+    """
+
+    project_id: str
+    name: str
+    origin: OriginMode
+    file_count: Optional[int] = None   # upload mode only
+    created_at: datetime
+    profiled: bool = False
+
+
 class ProjectDetails(ProjectMeta):
     """GET /api/projects/{id} response: metadata plus profile, code map, test plan, generated tests, execution, and diagnosis results."""
 

@@ -19,6 +19,7 @@ import type {
   ResultsDigest,
   StageRecord,
   StageStatus,
+  ProjectSummary,
 } from '../../api/types'
 
 const PIPELINE_STAGE_ORDER = [
@@ -892,6 +893,10 @@ function projectMetaFixture(overrides: Partial<ProjectMeta> = {}): ProjectMeta {
 }
 
 export const handlers = [
+  http.get('/api/projects', () =>
+    HttpResponse.json<ProjectSummary[]>([]),
+  ),
+
   http.post('/api/projects/upload', async ({ request }) => {
     const formData = await request.formData()
     const files = formData.getAll('files')

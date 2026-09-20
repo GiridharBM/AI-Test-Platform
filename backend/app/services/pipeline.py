@@ -25,6 +25,7 @@ truth. Stage-success predicates:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import uuid
@@ -32,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core import config
+from app.core.logging import log_event
 from app.execution.runner import execute_tests
 from app.models.codemap import CodeMap
 from app.models.diagnosis import DIAGNOSIS_FAILURES_DIAGNOSED, DIAGNOSIS_NO_FAILURES
@@ -98,6 +100,8 @@ from app.services.call_graph import build_call_graph
 from app.services.test_generator import generate_test_scaffolds, write_generated_files
 from app.services.test_planner import generate_test_plan
 
+logger = logging.getLogger(__name__)
+
 
 class PipelineGateError(Exception):
     """Raised when a user decision action is not permitted by the gate."""
@@ -131,6 +135,11 @@ def _load(ws: Path, project_id: str) -> PipelineState | None:
     try:
         return PipelineState.model_validate_json(raw)
     except Exception:
+        log_event(
+            logger, logging.ERROR, "pipeline_corrupt_state",
+            project_id=project_id,
+            error_type="PipelineStateCorruptError",
+        )
         # Authoritative state exists but cannot be parsed: an explicit
         # recoverable conflict, never a fabricated/empty state.
         raise PipelineStateCorruptError(
@@ -173,6 +182,10 @@ def _recover_if_stuck(state: PipelineState, ws: Path) -> bool:
     """
     if state.overall_status != PIPELINE_RUNNING or not _stale(state, _now()):
         return False
+    log_event(
+        logger, logging.WARNING, "pipeline_stuck_recovered",
+        project_id=state.project_id,
+    )
     _stop(state, PIPELINE_UNAVAILABLE, (
         "Pipeline was left running with no progress and has been marked "
         "unavailable after being abandoned; use Resume to re-run the "
@@ -613,6 +626,10 @@ def _run_stage(state: PipelineState, stage: str, ws: Path) -> None:
     state.available_actions = []
     state.stage_started_at = start
     _persist(ws, state)
+    log_event(
+        logger, logging.INFO, "stage_started",
+        project_id=state.project_id, stage=stage,
+    )
     try:
         fn = _EXEC[stage]
         status, result_id, reason, warnings = fn(ws, state.project_id)
@@ -632,6 +649,13 @@ def _run_stage(state: PipelineState, stage: str, ws: Path) -> None:
             1 for h in state.stage_history if h.stage == "improve"
         )
     _persist(ws, state)
+    log_event(
+        logger, logging.INFO, "stage_completed",
+        project_id=state.project_id, stage=stage, status=status,
+        duration_seconds=round(
+            (record.end_time - record.start_time).total_seconds(), 3
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +678,10 @@ def _complete(state: PipelineState, reason: str) -> None:
     state.user_decision_required = False
     state.available_actions = []
     state.reason = reason
+    log_event(
+        logger, logging.INFO, "pipeline_completed",
+        project_id=state.project_id,
+    )
 
 
 def _stop(state: PipelineState, overall: str, reason: str) -> None:
@@ -663,6 +691,15 @@ def _stop(state: PipelineState, overall: str, reason: str) -> None:
     state.available_actions = []
     state.reason = reason
     state.stage_started_at = None
+    level = (
+        logging.ERROR if overall == PIPELINE_FAILED
+        else logging.WARNING if overall in (PIPELINE_BLOCKED, PIPELINE_UNAVAILABLE)
+        else logging.INFO
+    )
+    log_event(
+        logger, level, "pipeline_stopped",
+        project_id=state.project_id, status=overall,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -846,6 +883,10 @@ def start_pipeline(project_id: str, workspace: Path | None = None) -> PipelineSt
         ))
         state.completed_stages.append("upload")
         _persist(ws, state)
+        log_event(
+            logger, logging.INFO, "pipeline_started",
+            project_id=project_id, pipeline_id=state.pipeline_id,
+        )
         _advance(state, ws)
         _persist(ws, state)
         return state
@@ -952,6 +993,10 @@ def decide_approve(project_id: str, workspace: Path | None = None) -> PipelineSt
         _run_stage(state, "approve", ws)
         _advance(state, ws)
         _persist(ws, state)
+        log_event(
+            logger, logging.INFO, "pipeline_action_approved",
+            project_id=state.project_id,
+        )
         return state
 
 
@@ -968,4 +1013,8 @@ def decide_reject(project_id: str, workspace: Path | None = None) -> PipelineSta
         state.completed_stages.append("approve")
         _advance(state, ws)
         _persist(ws, state)
+        log_event(
+            logger, logging.INFO, "pipeline_action_rejected",
+            project_id=state.project_id,
+        )
         return state

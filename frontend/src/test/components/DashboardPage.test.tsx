@@ -8,10 +8,13 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { http, HttpResponse } from 'msw'
 
 import App from '../../App'
+import type { ProjectSummary } from '../../api/types'
 import { registerLocalProject } from '../../registry/projects'
 import { installMswServer } from '../mocks/install'
+import { server } from '../mocks/server'
 
 installMswServer()
 
@@ -317,6 +320,63 @@ describe('DashboardPage', () => {
     expect(
       screen.getByText(/no projects registered yet/i),
     ).toBeDefined()
+  })
+
+  it('merges backend projects into the dashboard, backend metadata winning', async () => {
+    registerLocalProject({
+      id: 'p1',
+      name: 'Stale Local Name',
+      fileCount: 0,
+      profiled: false,
+    })
+    server.use(
+      http.get('/api/projects', () =>
+        HttpResponse.json<ProjectSummary[]>([
+          {
+            project_id: 'p1',
+            name: 'Fresh Server Name',
+            origin: 'upload',
+            file_count: 7,
+            created_at: '2026-02-02T00:00:00Z',
+            profiled: true,
+          },
+          {
+            project_id: 'p2',
+            name: 'Backend Only',
+            origin: 'path',
+            file_count: 2,
+            created_at: '2026-03-01T00:00:00Z',
+            profiled: false,
+          },
+        ]),
+      ),
+    )
+
+    renderApp('/')
+    expect(await screen.findByText('Fresh Server Name')).toBeDefined()
+    expect(screen.getByText('Backend Only')).toBeDefined()
+    expect(screen.getByText('7')).toBeDefined()
+    expect(screen.queryByText('Stale Local Name')).toBeNull()
+
+    const list = screen.getByRole('list')
+    const names = Array.from(list.children).map((item) =>
+      item.textContent ?? '',
+    )
+    expect(names[0]).toContain('Fresh Server Name')
+    expect(names[1]).toContain('Backend Only')
+  })
+
+  it('falls back to the local-only list when the backend fetch fails', async () => {
+    registerLocalProject({ id: 'aaa', name: 'Alpha Project' })
+    server.use(
+      http.get('/api/projects', () =>
+        HttpResponse.json({ detail: 'boom' }, { status: 500 }),
+      ),
+    )
+
+    renderApp('/')
+    expect(await screen.findByText('Alpha Project')).toBeDefined()
+    expect(screen.queryByText(/server error/i)).toBeNull()
   })
 })
 

@@ -3,8 +3,9 @@ import { Link, useNavigate } from 'react-router-dom'
 
 import type { ProjectMeta } from '../api/types'
 import { UploadProject } from '../components/UploadProject'
+import { useBackendProjects } from '../hooks/useBackendProjects'
 import { useProjectRegistry } from '../hooks/useProjectRegistry'
-import type { LocalProject } from '../registry/projects'
+import { mergeProjects, type LocalProject } from '../registry/projects'
 
 function formatAddedDate(createdAt: string | undefined): string | null {
   if (createdAt === undefined) {
@@ -53,6 +54,7 @@ function projectMetaRows(project: LocalProject): MetaRow[] {
 
 export function DashboardPage() {
   const { projects, register, remove, clear, recovered } = useProjectRegistry()
+  const { data: backendProjects } = useBackendProjects()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [confirmingClear, setConfirmingClear] = useState(false)
@@ -84,13 +86,19 @@ export function DashboardPage() {
     navigate(`/projects/${encodeURIComponent(project.project_id)}`)
   }
 
+  const mergedProjects = useMemo(
+    () => mergeProjects(projects, backendProjects ?? []),
+    [projects, backendProjects],
+  )
   const query = search.trim().toLowerCase()
   const visibleProjects = useMemo(
     () =>
       query === ''
-        ? projects
-        : projects.filter((project) => project.name.toLowerCase().includes(query)),
-    [projects, query],
+        ? mergedProjects
+        : mergedProjects.filter((project) =>
+            project.name.toLowerCase().includes(query),
+          ),
+    [mergedProjects, query],
   )
 
   return (
@@ -125,8 +133,8 @@ export function DashboardPage() {
               Your Projects
             </h2>
             <p className="mt-1 text-sm text-slate-400">
-              In V1, this list is saved locally in this browser only. It
-              remembers projects you uploaded or opened from this device.
+              Projects available on the backend appear here alongside saved
+              references from this browser.
             </p>
           </div>
           {projects.length > 0 && (
@@ -147,7 +155,7 @@ export function DashboardPage() {
           </p>
         )}
 
-        {projects.length > 0 && (
+        {mergedProjects.length > 0 && (
           <div className="space-y-2">
             <label htmlFor="project-search" className="block text-sm">
               Search projects
@@ -163,7 +171,7 @@ export function DashboardPage() {
           </div>
         )}
 
-        {projects.length === 0 ? (
+        {mergedProjects.length === 0 ? (
           <div className="space-y-3 rounded-lg border border-dashed border-slate-700 bg-slate-900/50 p-6 text-center">
             <p className="text-sm text-slate-300">
               No projects registered yet. Projects added from this browser will
@@ -172,7 +180,7 @@ export function DashboardPage() {
             <p className="text-sm text-slate-500">
               Upload a project folder above to start the automated test
               pipeline. A saved reference only points to a project in this
-              browser — it does not list projects on the server.
+              browser.
             </p>
           </div>
         ) : visibleProjects.length === 0 ? (

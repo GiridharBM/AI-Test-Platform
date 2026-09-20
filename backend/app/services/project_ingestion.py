@@ -11,6 +11,7 @@ Security model (Milestone 2):
 """
 
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -20,10 +21,13 @@ from pathlib import Path, PurePosixPath
 from fastapi import HTTPException
 
 from app.core import config
+from app.core.logging import log_event
 from app.models.project import ProjectMeta
 
 _META_DIR = ".meta"
 _SOURCE_DIR = "source"
+
+logger = logging.getLogger(__name__)
 
 
 class IngestionError(HTTPException):
@@ -162,6 +166,10 @@ def read_meta(workspace: Path, project_id: str) -> ProjectMeta:
     try:
         return ProjectMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
     except Exception:
+        log_event(
+            logger, logging.ERROR, "project_meta_corrupt",
+            project_id=project_id,
+        )
         # Authoritative project metadata that exists but cannot be parsed is an
         # explicit recoverable/unavailable condition, never a fabricated object.
         raise IngestionError(
@@ -416,6 +424,11 @@ def save_upload(
         created_at=_now(),
     )
     _write_meta(ws, meta)
+    log_event(
+        logger, logging.INFO, "project_uploaded",
+        project_id=meta.project_id, name=meta.name, origin=meta.origin,
+        file_count=meta.file_count,
+    )
     return meta
 
 
@@ -474,4 +487,37 @@ def register_local_project(raw_path: str, workspace: Path | None = None) -> Proj
         created_at=_now(),
     )
     _write_meta(ws, meta)
+    log_event(
+        logger, logging.INFO, "project_registered",
+        project_id=meta.project_id, name=meta.name, origin=meta.origin,
+    )
     return meta
+
+
+def list_project_metas(workspace: Path | None = None) -> list[ProjectMeta]:
+    """Enumerate registered projects in deterministic (project_id) order.
+
+    Graceful index: directories without a meta.json are ignored, and a corrupt
+    meta is skipped with a warning so one bad project can never break the
+    whole list.
+    """
+    ws = workspace if workspace is not None else config.WORKSPACE_DIR
+    metas: list[ProjectMeta] = []
+    if not ws.is_dir():
+        return metas
+    for child in sorted(ws.iterdir()):
+        meta_path = child / _META_DIR / "meta.json"
+        if not (child.is_dir() and meta_path.is_file()):
+            continue
+        try:
+            metas.append(
+                ProjectMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+            )
+        except Exception:
+            log_event(
+                logger, logging.WARNING, "project_index_skip_corrupt",
+                project_id=child.name,
+            )
+            continue
+    metas.sort(key=lambda m: m.project_id)
+    return metas

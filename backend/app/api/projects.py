@@ -9,8 +9,15 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from app.core import config
+from app.core.logging import log_event
 from app.models.pipeline import PipelineState
-from app.models.project import LocalPathRequest, ProjectDetails, ProjectMeta, ProjectProfile
+from app.models.project import (
+    LocalPathRequest,
+    ProjectDetails,
+    ProjectMeta,
+    ProjectProfile,
+    ProjectSummary,
+)
 from app.models.results import ResultsDigest
 from app.services import project_export
 from app.services import project_ingestion as ingestion
@@ -51,7 +58,14 @@ def upload_project(
     try:
         pipeline_service.start_pipeline(meta.project_id)
     except Exception:
-        logger.exception("pipeline auto-start failed for project %s", meta.project_id)
+        logger.exception(
+            "pipeline auto-start failed for project %s",
+            meta.project_id,
+            extra={"fields": {
+                "event": "pipeline_auto_start_failed",
+                "project_id": meta.project_id,
+            }},
+        )
         pipeline_service.mark_pipeline_unavailable(
             meta.project_id,
             reason=(
@@ -66,6 +80,21 @@ def upload_project(
 def add_local_project(body: LocalPathRequest) -> ProjectMeta:
     """Register an explicitly selected local directory for READ-ONLY profiling."""
     return ingestion.register_local_project(body.path)
+
+
+@router.get("", response_model=list[ProjectSummary])
+def list_projects() -> list[ProjectSummary]:
+    """Return a safe index of registered backend projects (L1).
+
+    Each entry exposes only summary metadata (id, name, origin, file_count,
+    created_at, profiled) — never absolute workspace/source paths. Ordered
+    deterministically; corrupt metas are skipped gracefully.
+    """
+    summaries = [
+        ProjectSummary(**meta.model_dump(exclude={"source_path"}))
+        for meta in ingestion.list_project_metas()
+    ]
+    return summaries
 
 
 @router.post("/{project_id}/profile", response_model=ProjectProfile)
@@ -624,6 +653,11 @@ def get_project(project_id: str) -> ProjectDetails:
         repair = tolerant(raw_repair, RepairResult)
         if repair is None:
             corrupt.append("repair")
+    if corrupt:
+        log_event(
+            logger, logging.WARNING, "project_artifact_corrupt",
+            project_id=project_id, artifacts=list(corrupt),
+        )
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,

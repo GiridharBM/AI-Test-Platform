@@ -1,3 +1,5 @@
+import type { ProjectSummary } from '../api/types'
+
 export interface LocalProject {
   id: string
   name: string
@@ -143,4 +145,41 @@ export function removeLocalProject(id: string): LocalProject[] {
 export function clearLocalProjects(): LocalProject[] {
   removeStoredRegistry()
   return []
+}
+
+function toLocalProject(remote: ProjectSummary): LocalProject {
+  return {
+    id: remote.project_id,
+    name: remote.name,
+    createdAt: remote.created_at,
+    origin: remote.origin,
+    fileCount: remote.file_count ?? undefined,
+    profiled: remote.profiled,
+  }
+}
+
+export function mergeProjects(
+  local: LocalProject[],
+  backend: ProjectSummary[],
+): LocalProject[] {
+  const backendById = new Map(backend.map((p) => [p.project_id, p] as const))
+  const merged: LocalProject[] = []
+  const seen = new Set<string>()
+  for (const project of local) {
+    const remote = backendById.get(project.id)
+    seen.add(project.id)
+    if (remote !== undefined) {
+      merged.push(toLocalProject(remote))
+    } else {
+      merged.push(project)
+    }
+  }
+  for (const remote of backend) {
+    if (seen.has(remote.project_id)) {
+      continue
+    }
+    seen.add(remote.project_id)
+    merged.push(toLocalProject(remote))
+  }
+  return merged
 }
