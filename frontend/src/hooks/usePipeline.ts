@@ -1,10 +1,10 @@
+import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { ApiError } from '../api/client'
-import { runPipelineAction } from '../api/pipeline'
-import { getPipeline } from '../api/projects'
-import { pipelineKeys } from '../api/pipeline'
-import { projectKeys } from '../api/projects'
+import { pipelineKeys, runPipelineAction } from '../api/pipeline'
+import { getPipeline, projectKeys } from '../api/projects'
+import { resultsKeys } from '../api/results'
 import type { PipelineActionName, PipelineState } from '../api/types'
 import { shouldRetryRead } from './useProject'
 
@@ -28,14 +28,49 @@ export function pipelinePollingIntervalMs(
   }
 }
 
+function pipelineRevision(state: PipelineState | undefined): string {
+  if (state === undefined) {
+    return ''
+  }
+  return [
+    state.overall_status,
+    state.current_stage,
+    state.completed_stages.join(','),
+    state.updated_at,
+    state.current_improvement_round,
+    state.stage_history.length,
+  ].join('|')
+}
+
 export function usePipeline(projectId: string) {
-  return useQuery<PipelineState>({
+  const queryClient = useQueryClient()
+  const lastRevision = useRef('')
+  const result = useQuery<PipelineState>({
     queryKey: pipelineKeys.detail(projectId),
     queryFn: () => getPipeline(projectId),
     refetchInterval: (query) => pipelinePollingIntervalMs(query.state.data),
     retry: shouldRetryRead,
     refetchOnWindowFocus: false,
   })
+
+  useEffect(() => {
+    const state = result.data
+    if (state === undefined) {
+      return
+    }
+    const revision = pipelineRevision(state)
+    if (lastRevision.current !== '' && lastRevision.current !== revision) {
+      queryClient.invalidateQueries({
+        queryKey: resultsKeys.digest(projectId),
+      })
+      queryClient.invalidateQueries({
+        queryKey: projectKeys.detail(projectId),
+      })
+    }
+    lastRevision.current = revision
+  }, [result.data, projectId, queryClient])
+
+  return result
 }
 
 export function usePipelineAction(projectId: string) {
@@ -45,6 +80,7 @@ export function usePipelineAction(projectId: string) {
     onSuccess: (data) => {
       queryClient.setQueryData(pipelineKeys.detail(projectId), data)
       queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
+      queryClient.invalidateQueries({ queryKey: resultsKeys.digest(projectId) })
     },
     onError: (error) => {
       if (error instanceof ApiError && error.isConflict()) {

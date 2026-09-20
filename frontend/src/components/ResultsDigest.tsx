@@ -116,9 +116,19 @@ export function ResultsDigest({ projectId }: ResultsDigestProps) {
   if (d === undefined) return null
   const counts = d.test_counts
   const repair = d.repair
+  const stale =
+    query.isRefetchError &&
+    query.error instanceof ApiError &&
+    (query.error.status === null || query.error.status >= 500)
 
   return (
     <div className="space-y-3">
+      {stale && (
+        <p role="status" className="text-xs text-amber-200/90">
+          Results may be out of date — the latest refresh failed. Showing the
+          last successfully loaded results.
+        </p>
+      )}
       <VerdictBadge verdict={d.overall_verdict} reason={d.reason} />
 
       {d.warnings.length > 0 && (

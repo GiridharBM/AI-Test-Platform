@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import type { ProjectMeta } from '../api/types'
@@ -55,6 +55,22 @@ export function DashboardPage() {
   const { projects, register, remove, clear, recovered } = useProjectRegistry()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
+  const [confirmingClear, setConfirmingClear] = useState(false)
+  const cancelClearRef = useRef<HTMLButtonElement>(null)
+  const confirmClearRef = useRef<HTMLButtonElement>(null)
+  const clearTriggerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (confirmingClear) {
+      clearTriggerRef.current = document.activeElement as HTMLElement | null
+      cancelClearRef.current?.focus()
+    }
+  }, [confirmingClear])
+
+  function closeClearDialog() {
+    setConfirmingClear(false)
+    requestAnimationFrame(() => clearTriggerRef.current?.focus())
+  }
 
   function handleUploaded(project: ProjectMeta): void {
     register({
@@ -116,7 +132,7 @@ export function DashboardPage() {
           {projects.length > 0 && (
             <button
               type="button"
-              onClick={clear}
+              onClick={() => setConfirmingClear(true)}
               className="text-sm text-slate-400 underline-offset-2 hover:text-slate-200 hover:underline"
             >
               Clear saved list
@@ -213,6 +229,55 @@ export function DashboardPage() {
           </ul>
         )}
       </section>
+
+      {confirmingClear && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="clear-list-dialog-title"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              closeClearDialog()
+            }
+          }}
+          className="fixed inset-0 z-10 flex items-center justify-center bg-slate-950/70 p-4"
+        >
+          <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-5">
+            <h3
+              id="clear-list-dialog-title"
+              className="text-base font-semibold text-white"
+            >
+              Clear the saved list?
+            </h3>
+            <p className="mt-2 text-sm text-slate-300">
+              This removes the saved project references from this browser. It
+              does not delete any backend projects — the projects themselves
+              and their pipeline state are unaffected.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                ref={cancelClearRef}
+                type="button"
+                onClick={closeClearDialog}
+                className="rounded-md border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                ref={confirmClearRef}
+                type="button"
+                onClick={() => {
+                  clear()
+                  closeClearDialog()
+                }}
+                className="rounded-md bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600"
+              >
+                Clear saved list
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

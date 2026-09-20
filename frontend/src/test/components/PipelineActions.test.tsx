@@ -257,6 +257,60 @@ describe('PipelineActions — approve confirmation', () => {
   })
 })
 
+describe('PipelineActions — reject confirmation', () => {
+  function trackReject() {
+    let rejectCalls = 0
+    server.use(
+      http.post('/api/projects/p_waiting_user/pipeline/reject', () => {
+        rejectCalls += 1
+        return HttpResponse.json(
+          pipelineFixture('rejected', {
+            project_id: 'p_waiting_user',
+            pipeline_id: 'p_waiting_user',
+          }),
+        )
+      }),
+    )
+    return { getRejectCalls: () => rejectCalls }
+  }
+
+  it('opens a confirmation dialog without calling the reject API', () => {
+    const { getRejectCalls } = trackReject()
+    renderActions('waiting_for_approval')
+    fireEvent.click(screen.getByRole('button', { name: 'Reject repair' }))
+    const dialog = screen.getByRole('dialog', { name: 'Reject repair?' })
+    expect(dialog).toBeDefined()
+    expect(
+      screen.getByText(/reject the repair candidate/i),
+    ).toBeDefined()
+    expect(getRejectCalls()).toBe(0)
+  })
+
+  it('closes the dialog on Cancel without calling the reject API', () => {
+    const { getRejectCalls } = trackReject()
+    renderActions('waiting_for_approval')
+    fireEvent.click(screen.getByRole('button', { name: 'Reject repair' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(getRejectCalls()).toBe(0)
+  })
+
+  it('calls the reject action only after explicit confirmation', async () => {
+    const { getRejectCalls } = trackReject()
+    renderActions('waiting_for_approval')
+    fireEvent.click(screen.getByRole('button', { name: 'Reject repair' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Reject repair' }),
+    )
+    await waitFor(() => {
+      expect(getRejectCalls()).toBe(1)
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+  })
+})
+
 describe('PipelineActions — unknown action robustness', () => {
   it('ignores action names the backend contract does not define', () => {
     renderActions('waiting_for_user', 'p_waiting_user', {

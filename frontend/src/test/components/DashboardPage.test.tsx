@@ -264,6 +264,60 @@ describe('DashboardPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/server error/i)
     expect(window.localStorage.getItem('auto-testing.projects')).toBeNull()
   })
+
+  it('requires confirmation before clearing the saved list', () => {
+    registerLocalProject({ id: 'aaa', name: 'Alpha Project' })
+
+    renderApp('/')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear saved list' }))
+
+    const dialog = screen.getByRole('dialog', {
+      name: 'Clear the saved list?',
+    })
+    expect(dialog).toBeDefined()
+    expect(
+      screen.getByText(/does not delete any backend projects/i),
+    ).toBeDefined()
+    expect(screen.getByText('Alpha Project')).toBeDefined()
+    expect(
+      window.localStorage.getItem('auto-testing.projects'),
+    ).not.toBeNull()
+  })
+
+  it('keeps the saved list when clearing is cancelled', () => {
+    registerLocalProject({ id: 'aaa', name: 'Alpha Project' })
+
+    renderApp('/')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear saved list' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText('Alpha Project')).toBeDefined()
+    expect(
+      window.localStorage.getItem('auto-testing.projects'),
+    ).not.toBeNull()
+  })
+
+  it('clears the local saved list only after confirmation', () => {
+    registerLocalProject({ id: 'aaa', name: 'Alpha Project' })
+    registerLocalProject({ id: 'bbb', name: 'Beta Project' })
+
+    renderApp('/')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear saved list' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Clear saved list' }),
+    )
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByText('Alpha Project')).toBeNull()
+    expect(screen.queryByText('Beta Project')).toBeNull()
+    expect(window.localStorage.getItem('auto-testing.projects')).toBeNull()
+    expect(
+      screen.getByText(/no projects registered yet/i),
+    ).toBeDefined()
+  })
 })
 
 describe('ProjectWorkspacePage', () => {

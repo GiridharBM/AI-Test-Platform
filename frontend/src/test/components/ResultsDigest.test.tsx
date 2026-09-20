@@ -1,10 +1,12 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { PropsWithChildren } from 'react'
 
+import { resultsKeys } from '../../api/results'
 import { ResultsDigest } from '../../components/ResultsDigest'
+import { resultsDigestFixture } from '../mocks/handlers'
 import { installMswServer } from '../mocks/install'
 import { server } from '../mocks/server'
 
@@ -14,7 +16,7 @@ beforeEach(() => {
   cleanup()
 })
 
-function renderDigest(projectId: string) {
+function renderDigest(projectId: string): QueryClient {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, retryDelay: 1 },
@@ -23,7 +25,8 @@ function renderDigest(projectId: string) {
   const wrapper = ({ children }: PropsWithChildren) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   )
-  return render(<ResultsDigest projectId={projectId} />, { wrapper })
+  render(<ResultsDigest projectId={projectId} />, { wrapper })
+  return client
 }
 
 describe('ResultsDigest', () => {
@@ -113,40 +116,83 @@ describe('ResultsDigest', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
   })
 
-  it('recovers after retry when the error clears', async () => {
+  it('shows stale data with a non-blocking notice when a refresh fails', async () => {
     let calls = 0
     server.use(
-      http.get('/api/projects/flaky/results', () => {
+      http.get('/api/projects/stale_project/results', () => {
         calls += 1
-        if (calls <= 3) {
-          return HttpResponse.json({ detail: 'boom' }, { status: 500 })
+        if (calls === 1) {
+          return HttpResponse.json(
+            resultsDigestFixture({ project_id: 'stale_project' }),
+          )
         }
-        return HttpResponse.json({
-          schema_version: 1,
-          project_id: 'flaky',
-          created_at: '2026-01-01T09:15:00Z',
-          overall_verdict: 'no_execution',
-          reason: 'No test execution has run yet.',
-          pipeline_status: null,
-          pipeline_current_stage: null,
-          execution_status: null,
-          execution_duration_seconds: null,
-          test_counts: null,
-          diagnosis_status: null,
-          failing_tests: [],
-          improvement_status: null,
-          improvement_changes: null,
-          improvement_files_modified: null,
-          retest_status: null,
-          repair: null,
-          evaluation: null,
-          warnings: [],
-        })
+        return HttpResponse.json({ detail: 'boom' }, { status: 500 })
       }),
     )
-    renderDigest('flaky')
-    expect(await screen.findByText('Could not load results.')).toBeDefined()
-    screen.getByRole('button', { name: 'Retry' }).click()
-    expect(await screen.findByText('No execution yet')).toBeDefined()
+    const client = renderDigest('stale_project')
+
+    expect(await screen.findByText('Failed')).toBeDefined()
+    expect(screen.getByText('Test execution failed.')).toBeDefined()
+
+    await act(async () => {
+      client.invalidateQueries({ queryKey: resultsKeys.digest('stale_project') })
+    })
+
+    expect(
+      await screen.findByText(/Results may be out of date/i),
+    ).toBeDefined()
+    expect(screen.getByText('Failed')).toBeDefined()
+    expect(
+      screen.getByText('Test execution failed.'),
+    ).toBeDefined()
+    expect(
+      screen.queryByText('Could not load results.'),
+    ).toBeNull()
+  })
+
+  it('clears the stale notice after a successful refresh', async () => {
+    let calls = 0
+    let healthy = false
+    server.use(
+      http.get('/api/projects/recovering_project/results', () => {
+        calls += 1
+        if (calls === 1) {
+          return HttpResponse.json(
+            resultsDigestFixture({ project_id: 'recovering_project' }),
+          )
+        }
+        if (!healthy) {
+          return HttpResponse.json({ detail: 'boom' }, { status: 500 })
+        }
+        return HttpResponse.json(
+          resultsDigestFixture({
+            project_id: 'recovering_project',
+            overall_verdict: 'passed',
+            reason: 'Source repair applied and final validation passed.',
+          }),
+        )
+      }),
+    )
+    const client = renderDigest('recovering_project')
+
+    expect(await screen.findByText('Failed')).toBeDefined()
+
+    await act(async () => {
+      client.invalidateQueries({
+        queryKey: resultsKeys.digest('recovering_project'),
+      })
+    })
+    expect(
+      await screen.findByText(/Results may be out of date/i),
+    ).toBeDefined()
+
+    healthy = true
+    await act(async () => {
+      client.invalidateQueries({
+        queryKey: resultsKeys.digest('recovering_project'),
+      })
+    })
+    expect(await screen.findByText('Passed')).toBeDefined()
+    expect(screen.queryByText(/Results may be out of date/i)).toBeNull()
   })
 })

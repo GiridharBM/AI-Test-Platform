@@ -12,37 +12,56 @@ interface PipelineActionsProps {
 
 const PRIMARY_ACTIONS = new Set(['retest', 'repair', 'approve'])
 
+type ConfirmingAction = Extract<PipelineActionName, 'approve' | 'reject'>
+
+const CONFIRMATION_COPY: Record<
+  ConfirmingAction,
+  { title: string; body: string; confirmLabel: string }
+> = {
+  approve: {
+    title: 'Approve and apply repair?',
+    body: 'This will approve the validated repair candidate and apply the change to the project source code. The repair has not been applied yet.',
+    confirmLabel: 'Approve and apply repair',
+  },
+  reject: {
+    title: 'Reject repair?',
+    body: 'This will reject the repair candidate. The source code is not changed and the pipeline ends as rejected.',
+    confirmLabel: 'Reject repair',
+  },
+}
+
 export function PipelineActions({ projectId, state }: PipelineActionsProps) {
   const mutation = usePipelineAction(projectId)
-  const [confirmingApprove, setConfirmingApprove] = useState(false)
+  const [confirmingAction, setConfirmingAction] =
+    useState<ConfirmingAction | null>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
-  const approveRef = useRef<HTMLButtonElement>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLElement | null>(null)
   const actions = (state.user_decision_required ? state.available_actions : []).filter(
     (action): action is PipelineActionName => action in ACTION_LABELS,
   )
 
   useEffect(() => {
-    if (confirmingApprove) {
+    if (confirmingAction !== null) {
       triggerRef.current = document.activeElement as HTMLElement | null
       cancelRef.current?.focus()
     }
-  }, [confirmingApprove])
+  }, [confirmingAction])
 
-  function closeApproveDialog() {
-    setConfirmingApprove(false)
+  function closeDialog() {
+    setConfirmingAction(null)
     requestAnimationFrame(() => triggerRef.current?.focus())
   }
 
   function trapFocus(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {
-      closeApproveDialog()
+      closeDialog()
       return
     }
     if (event.key !== 'Tab') {
       return
     }
-    const focusable = [cancelRef.current, approveRef.current].filter(
+    const focusable = [cancelRef.current, confirmRef.current].filter(
       (el): el is HTMLButtonElement => el !== null,
     )
     if (focusable.length === 0) {
@@ -65,12 +84,15 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
   }
 
   function requestAction(action: PipelineActionName) {
-    if (action === 'approve') {
-      setConfirmingApprove(true)
+    if (action === 'approve' || action === 'reject') {
+      setConfirmingAction(action)
       return
     }
     mutation.mutate(action)
   }
+
+  const confirmation =
+    confirmingAction !== null ? CONFIRMATION_COPY[confirmingAction] : null
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -80,7 +102,7 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
             key={action}
             type="button"
             onClick={() => requestAction(action)}
-            disabled={mutation.isPending || confirmingApprove}
+            disabled={mutation.isPending || confirmingAction !== null}
             aria-label={actionLabel(action)}
             className={
               PRIMARY_ACTIONS.has(action)
@@ -104,44 +126,45 @@ export function PipelineActions({ projectId, state }: PipelineActionsProps) {
         </p>
       )}
 
-      {confirmingApprove && (
+      {confirmation !== null && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-labelledby="approve-dialog-title"
+          aria-labelledby="confirmation-dialog-title"
           onKeyDown={trapFocus}
           className="fixed inset-0 z-10 flex items-center justify-center bg-slate-950/70 p-4"
         >
           <div className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-900 p-5">
-            <h3 id="approve-dialog-title" className="text-base font-semibold text-white">
-              Approve and apply repair?
+            <h3
+              id="confirmation-dialog-title"
+              className="text-base font-semibold text-white"
+            >
+              {confirmation.title}
             </h3>
-            <p className="mt-2 text-sm text-slate-300">
-              This will approve the validated repair candidate and apply the
-              change to the project source code. The repair has not been
-              applied yet.
-            </p>
+            <p className="mt-2 text-sm text-slate-300">{confirmation.body}</p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 ref={cancelRef}
                 type="button"
-                onClick={() => setConfirmingApprove(false)}
+                onClick={() => setConfirmingAction(null)}
                 disabled={mutation.isPending}
                 className="rounded-md border border-slate-600 bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
-                ref={approveRef}
+                ref={confirmRef}
                 type="button"
                 onClick={() => {
-                  mutation.mutate('approve')
-                  closeApproveDialog()
+                  if (confirmingAction !== null) {
+                    mutation.mutate(confirmingAction)
+                  }
+                  closeDialog()
                 }}
                 disabled={mutation.isPending}
                 className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-slate-950 hover:bg-amber-500 disabled:opacity-50"
               >
-                Approve and apply repair
+                {confirmation.confirmLabel}
               </button>
             </div>
           </div>
