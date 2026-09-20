@@ -109,6 +109,7 @@ export const ACTION_LABELS: Record<PipelineActionName, string> = {
   skip_repair: 'Skip repair',
   approve: 'Approve and apply repair',
   reject: 'Reject repair',
+  resume: 'Resume pipeline',
 }
 
 export function actionLabel(action: string): string {

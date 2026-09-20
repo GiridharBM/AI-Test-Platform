@@ -21,7 +21,10 @@ from app.models.repair import (
     APPLICATION_NOT_APPLIED,
     APPROVAL_PENDING,
     APPROVAL_REJECTED,
+    FINAL_VALIDATION_FAILED,
+    FINAL_VALIDATION_NOT_RUN,
     FINAL_VALIDATION_PASSED,
+    FINAL_VALIDATION_UNAVAILABLE,
     FinalValidation,
     RepairCandidate,
     RepairResult,
@@ -268,6 +271,31 @@ class TestResultsEndpoint:
         _write_repair(project_id, APPROVAL_REJECTED, APPLICATION_NOT_APPLIED)
         data = client.get(f"/api/projects/{project_id}/results").json()
         assert data["overall_verdict"] == "rejected"
+
+    def test_repair_applied_final_validation_failed(self, tmp_path):
+        project_id = _register_project(tmp_path)
+        _write_execution(project_id, "failed", failed=1, total=1)
+        _write_repair(project_id, "approved", APPLICATION_APPLIED, FINAL_VALIDATION_FAILED)
+        data = client.get(f"/api/projects/{project_id}/results").json()
+        assert data["overall_verdict"] == "failed"
+
+    def test_repair_applied_final_validation_unavailable(self, tmp_path):
+        """ACT-2: aligns with the pipeline terminal for unavailable final
+        validation (`unavailable`), never reported as failed."""
+        project_id = _register_project(tmp_path)
+        _write_execution(project_id, "failed", failed=1, total=1)
+        _write_repair(project_id, "approved", APPLICATION_APPLIED, FINAL_VALIDATION_UNAVAILABLE)
+        data = client.get(f"/api/projects/{project_id}/results").json()
+        assert data["overall_verdict"] == "unavailable"
+
+    def test_repair_applied_final_validation_not_recorded_is_unavailable(self, tmp_path):
+        """Missing evidence must never fabricate success: applied repair with
+        no recorded final validation verdicts `unavailable`, not `passed`."""
+        project_id = _register_project(tmp_path)
+        _write_execution(project_id, "failed", failed=1, total=1)
+        _write_repair(project_id, "approved", APPLICATION_APPLIED, FINAL_VALIDATION_NOT_RUN)
+        data = client.get(f"/api/projects/{project_id}/results").json()
+        assert data["overall_verdict"] == "unavailable"
 
     def test_evaluation_section(self, tmp_path):
         project_id = _register_project(tmp_path)

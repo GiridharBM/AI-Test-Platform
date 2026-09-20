@@ -128,7 +128,7 @@ def evaluate_project(project_id: str, workspace: Path | None = None) -> Evaluati
     ws = workspace if workspace is not None else config.WORKSPACE_DIR
     ingestion.read_meta(ws, project_id)
 
-    source_root = ingestion.source_dir(ws, project_id)
+    source_root = ingestion.source_root(ws, project_id)
     test_dir = Path(ws) / project_id / "generated_tests"
 
     retest = None

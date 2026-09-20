@@ -119,6 +119,20 @@ def source_dir(workspace: Path, project_id: str) -> Path:
     return project_dir(workspace, project_id) / _SOURCE_DIR
 
 
+def source_root(workspace: Path, project_id: str) -> Path:
+    """Canonical, origin-aware source root for a project.
+
+    Path-derived projects use their registered on-disk location (a path the
+    user supplied once at registration; never client-controlled afterward).
+    Uploaded projects use the sandboxed workspace copy. This is the single
+    authoritative resolver so every consumer agrees on where source lives.
+    """
+    meta = read_meta(workspace, project_id)
+    if meta.origin == "path":
+        return Path(meta.source_path)
+    return source_dir(workspace, project_id)
+
+
 def _write_meta(workspace: Path, meta: ProjectMeta) -> None:
     meta_path = project_dir(workspace, meta.project_id) / _META_DIR / "meta.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)

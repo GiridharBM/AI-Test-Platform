@@ -492,7 +492,7 @@ def retest_project(
         improvement, diagnosis, prev_execution,
         gen_root=ws, project_id=project_id,
         copied_user_tests=copied_user_tests,
-        source_root=Path(ws) / project_id / "source",
+        source_root=ingestion.source_root(ws, project_id),
     )
 
     ingestion.save_retest(ws, result.model_dump_json())

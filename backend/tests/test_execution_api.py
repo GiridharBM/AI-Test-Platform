@@ -75,6 +75,27 @@ class TestExecuteEndpoint:
             import shutil
             shutil.rmtree(src, ignore_errors=True)
 
+    def test_execute_path_origin_mounts_registered_source(self, tmp_path):
+        """F-GAP1: standalone /execute passes the registered source root for a
+        path-origin project instead of a (missing) workspace copy."""
+        from app.models.execution import ExecutionSummary, TestExecutionResult
+
+        project_id = _register_project(tmp_path)
+        _run_pipeline(project_id)
+
+        fake = TestExecutionResult(
+            project_id=project_id,
+            overall_status=STATUS_PASSED,
+            exit_code=0,
+            summary=ExecutionSummary(total_files=1, passed=1),
+        )
+        with patch("app.execution.runner.execute_tests", return_value=fake) as m:
+            resp = client.post(f"/api/projects/{project_id}/execute")
+
+        assert resp.status_code == 200
+        m.assert_called_once()
+        assert m.call_args.kwargs["source_root"] == Path(tmp_path) / "myproject"
+
     def test_execute_unknown_project_returns_404(self):
         resp = client.post("/api/projects/nonexistent/execute")
         assert resp.status_code == 404

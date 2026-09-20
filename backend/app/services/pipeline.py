@@ -181,10 +181,7 @@ def _exec_discover(ws: Path, project_id: str):
 
 
 def _source_root(ws: Path, project_id: str) -> Path:
-    meta = ingestion.read_meta(ws, project_id)
-    if meta.origin == "path":
-        return Path(meta.source_path)
-    return ingestion.source_dir(ws, project_id)
+    return ingestion.source_root(ws, project_id)
 
 
 def _read_python_files(root: Path) -> list[tuple[str, str]]:

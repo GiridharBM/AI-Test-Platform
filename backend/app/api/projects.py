@@ -161,7 +161,8 @@ def execute_project(project_id: str):
 
     from app.execution.runner import execute_tests
     generated_dir = Path(config.WORKSPACE_DIR) / project_id / "generated_tests"
-    exec_result = execute_tests(generated_dir, project_id)
+    source_root = ingestion.source_root(config.WORKSPACE_DIR, project_id)
+    exec_result = execute_tests(generated_dir, project_id, source_root=source_root)
     ingestion.save_execution(config.WORKSPACE_DIR, exec_result.model_dump_json())
     return exec_result
 

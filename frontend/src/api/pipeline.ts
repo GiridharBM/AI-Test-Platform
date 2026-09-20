@@ -12,6 +12,7 @@ const ACTION_CALLERS: Record<PipelineActionName, (id: string) => Promise<Pipelin
   skip_repair: skipRepair,
   approve: approveRepair,
   reject: rejectRepair,
+  resume: resumePipeline,
 }
 
 export function runPipelineAction(

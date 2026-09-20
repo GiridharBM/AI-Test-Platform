@@ -34,6 +34,7 @@ export type PipelineActionName =
   | 'skip_repair'
   | 'approve'
   | 'reject'
+  | 'resume'
 
 export interface StageRecord {
   stage: string

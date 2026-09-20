@@ -139,6 +139,37 @@ class TestRetestEndpoint:
         assert data["status"] == "no_op"
 
 
+def test_retest_path_origin_uses_registered_source(tmp_path, monkeypatch):
+    """F-GAP1: /retest resolves the registered source root for a path-origin
+    project rather than the (missing) workspace source copy."""
+    from datetime import datetime, timezone
+
+    from app.models.retest import ReTestResult
+    from app.services import retest as retest_service
+
+    project_id = _register_project(tmp_path)
+    _run_pipeline(project_id)
+    _write_execution(project_id)
+    _write_improvement(project_id)
+
+    captured = {}
+
+    def _fake(improvement, diagnosis, prev_execution, gen_root, project_id,
+              source_root=None, copied_user_tests=None):
+        captured["source_root"] = source_root
+        return ReTestResult(
+            project_id=project_id,
+            status="no_op",
+            created_at=datetime.now(timezone.utc),
+        )
+
+    monkeypatch.setattr(retest_service, "retest_from_artifacts", _fake)
+
+    resp = client.post(f"/api/projects/{project_id}/retest")
+    assert resp.status_code == 200
+    assert captured["source_root"] == Path(tmp_path) / "myproject"
+
+
 class TestRetestPersistence:
     def test_save_and_read(self, tmp_path):
         ws = tmp_path / "workspace"

@@ -38,7 +38,9 @@ from app.models.repair import (
     APPLICATION_APPLIED,
     APPROVAL_PENDING,
     APPROVAL_REJECTED,
+    FINAL_VALIDATION_NOT_RUN,
     FINAL_VALIDATION_PASSED,
+    FINAL_VALIDATION_UNAVAILABLE,
 )
 from app.models.retest import (
     RETEST_FIXED,
@@ -320,10 +322,23 @@ def _derive_verdict(digest: ResultsDigest, execution, retest, repair) -> None:
             )
             return
         if repair.application_state == APPLICATION_APPLIED:
-            digest.overall_verdict = DIGEST_VERDICT_FAILED
-            digest.reason = (
-                "Source repair applied but final validation did not pass."
+            fv_status = (
+                repair.final_validation.status
+                if repair.final_validation is not None
+                else FINAL_VALIDATION_NOT_RUN
             )
+            if fv_status in (FINAL_VALIDATION_UNAVAILABLE, FINAL_VALIDATION_NOT_RUN):
+                # Align with the pipeline: unavailable final validation is not
+                # failure. Missing evidence must never fabricate success either,
+                # so both map to `unavailable`, never `passed`.
+                digest.overall_verdict = DIGEST_VERDICT_UNAVAILABLE
+                digest.reason = (
+                    "Source repair applied but final validation is unavailable "
+                    "or was not recorded."
+                )
+                return
+            digest.overall_verdict = DIGEST_VERDICT_FAILED
+            digest.reason = "Source repair applied but final validation failed."
             return
 
     if status in _EXECUTION_FAILURE_STATUSES:

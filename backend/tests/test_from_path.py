@@ -58,3 +58,18 @@ def test_from_path_relative_resolves(client, tmp_path):
     d.mkdir()
     res = client.post("/api/projects/from-path", json={"path": str(d)})
     assert res.status_code == 200
+
+
+def test_source_root_path_origin_uses_registered_location(client, tmp_path):
+    """F-GAP1: path-origin projects resolve their registered location as the
+    source root, not a (missing) workspace copy."""
+    from app.core import config
+
+    d = tmp_path / "srcproj"
+    d.mkdir()
+    res = client.post("/api/projects/from-path", json={"path": str(d)})
+    assert res.status_code == 200
+    pid = res.json()["project_id"]
+    assert ingestion.source_root(config.WORKSPACE_DIR, pid) == d
+    # No workspace source copy is expected for path-origin projects.
+    assert not (config.WORKSPACE_DIR / pid / "source").exists()

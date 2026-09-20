@@ -92,7 +92,7 @@ export function ProjectWorkspacePage() {
         {p !== undefined && (
           <>
             {isTerminalError ? (
-              <ErrorPanel state={p} />
+              <ErrorPanel projectId={id} state={p} />
             ) : (
               <PipelineStatus state={p} />
             )}
