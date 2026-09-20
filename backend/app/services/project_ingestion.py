@@ -11,6 +11,7 @@ Security model (Milestone 2):
 """
 
 import json
+import os
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -31,6 +32,21 @@ class IngestionError(HTTPException):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _atomic_write_json(path: Path, content: str) -> None:
+    """Write JSON content atomically: serialize to a temp file in the same
+    directory, flush, then os.replace.
+
+    A crash between the temp write and the replace leaves the previous
+    authoritative file fully intact; a partial write can never be observed at
+    the destination, and a corrupt temp never replaces a valid destination.
+    """
+    temp = path.with_name(path.name + ".tmp")
+    with open(temp, "w", encoding="utf-8") as fh:
+        fh.write(content)
+        fh.flush()
+    os.replace(temp, path)
 
 
 def sanitize_relative_path(raw: str) -> str:
@@ -136,14 +152,22 @@ def source_root(workspace: Path, project_id: str) -> Path:
 def _write_meta(workspace: Path, meta: ProjectMeta) -> None:
     meta_path = project_dir(workspace, meta.project_id) / _META_DIR / "meta.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(meta.model_dump_json(), encoding="utf-8")
+    _atomic_write_json(meta_path, meta.model_dump_json())
 
 
 def read_meta(workspace: Path, project_id: str) -> ProjectMeta:
     meta_path = project_dir(workspace, project_id) / _META_DIR / "meta.json"
     if not meta_path.is_file():
         raise IngestionError(status_code=404, detail=f"Unknown project: {project_id}")
-    return ProjectMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+    try:
+        return ProjectMeta.model_validate_json(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        # Authoritative project metadata that exists but cannot be parsed is an
+        # explicit recoverable/unavailable condition, never a fabricated object.
+        raise IngestionError(
+            status_code=409,
+            detail="Project metadata is unreadable (corrupt); project state cannot be determined.",
+        ) from None
 
 
 def save_profile(workspace: Path, profile_json: str) -> None:
@@ -152,7 +176,7 @@ def save_profile(workspace: Path, profile_json: str) -> None:
     pid = json.loads(profile_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "profile.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(profile_json, encoding="utf-8")
+    _atomic_write_json(meta_path, profile_json)
 
 
 def read_profile(workspace: Path, project_id: str) -> str | None:
@@ -167,7 +191,7 @@ def save_codemap(workspace: Path, codemap_json: str) -> None:
     pid = json.loads(codemap_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "codemap.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(codemap_json, encoding="utf-8")
+    _atomic_write_json(meta_path, codemap_json)
 
 
 def read_codemap(workspace: Path, project_id: str) -> str | None:
@@ -182,7 +206,7 @@ def save_test_plan(workspace: Path, plan_json: str) -> None:
     pid = json.loads(plan_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "test_plan.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(plan_json, encoding="utf-8")
+    _atomic_write_json(meta_path, plan_json)
 
 
 def read_test_plan(workspace: Path, project_id: str) -> str | None:
@@ -197,7 +221,7 @@ def save_test_generation(workspace: Path, gen_json: str) -> None:
     pid = json.loads(gen_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "test_generation.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(gen_json, encoding="utf-8")
+    _atomic_write_json(meta_path, gen_json)
 
 
 def read_test_generation(workspace: Path, project_id: str) -> str | None:
@@ -212,7 +236,7 @@ def save_execution(workspace: Path, exec_json: str) -> None:
     pid = json.loads(exec_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "execution.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(exec_json, encoding="utf-8")
+    _atomic_write_json(meta_path, exec_json)
 
 
 def read_execution(workspace: Path, project_id: str) -> str | None:
@@ -228,7 +252,7 @@ def save_diagnosis(workspace: Path, diagnosis_json: str) -> None:
     pid = json.loads(diagnosis_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "diagnosis.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(diagnosis_json, encoding="utf-8")
+    _atomic_write_json(meta_path, diagnosis_json)
 
 
 def read_diagnosis(workspace: Path, project_id: str) -> str | None:
@@ -244,7 +268,7 @@ def save_improvement(workspace: Path, improvement_json: str) -> None:
     pid = json.loads(improvement_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "improvement.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(improvement_json, encoding="utf-8")
+    _atomic_write_json(meta_path, improvement_json)
 
 
 def read_improvement(workspace: Path, project_id: str) -> str | None:
@@ -260,7 +284,7 @@ def save_retest(workspace: Path, retest_json: str) -> None:
     pid = json.loads(retest_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "retest.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(retest_json, encoding="utf-8")
+    _atomic_write_json(meta_path, retest_json)
 
 
 def read_retest(workspace: Path, project_id: str) -> str | None:
@@ -276,7 +300,7 @@ def save_pipeline(workspace: Path, pipeline_json: str) -> None:
     pid = json.loads(pipeline_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "pipeline.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(pipeline_json, encoding="utf-8")
+    _atomic_write_json(meta_path, pipeline_json)
 
 
 def read_pipeline(workspace: Path, project_id: str) -> str | None:
@@ -292,7 +316,7 @@ def save_evaluation(workspace: Path, evaluation_json: str) -> None:
     pid = json.loads(evaluation_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "evaluation.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(evaluation_json, encoding="utf-8")
+    _atomic_write_json(meta_path, evaluation_json)
 
 
 def read_evaluation(workspace: Path, project_id: str) -> str | None:
@@ -308,7 +332,7 @@ def save_repair(workspace: Path, repair_json: str) -> None:
     pid = json.loads(repair_json)["project_id"]
     meta_path = project_dir(workspace, pid) / _META_DIR / "repair.json"
     meta_path.parent.mkdir(parents=True, exist_ok=True)
-    meta_path.write_text(repair_json, encoding="utf-8")
+    _atomic_write_json(meta_path, repair_json)
 
 
 def read_repair(workspace: Path, project_id: str) -> str | None:

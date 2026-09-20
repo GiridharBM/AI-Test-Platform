@@ -1,5 +1,6 @@
 """Project ingestion, profiling, test discovery, and test plan API endpoints."""
 
+import logging
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -16,6 +17,8 @@ from app.services import project_ingestion as ingestion
 from app.services import project_profiler as profiler
 from app.services import project_discovery as discovery
 from app.services import pipeline as pipeline_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -42,11 +45,20 @@ def upload_project(
     # Upload success automatically starts the sequential pipeline (Profile ->
     # Discover -> Plan -> Generate -> Execute -> Diagnose -> Improve loop). The
     # pipeline is best-effort: it must never break the upload response, and any
-    # failure is recorded in the pipeline state for resume.
+    # failure is made visible through the authoritative pipeline state (an
+    # unavailable pipeline with a safe reason + Resume as the recoverable
+    # action) and the server log — never silently discarded.
     try:
         pipeline_service.start_pipeline(meta.project_id)
     except Exception:
-        pass
+        logger.exception("pipeline auto-start failed for project %s", meta.project_id)
+        pipeline_service.mark_pipeline_unavailable(
+            meta.project_id,
+            reason=(
+                "Pipeline auto-start failed after upload; use Resume to run "
+                "the interrupted stage deterministically."
+            ),
+        )
     return meta
 
 
@@ -397,12 +409,19 @@ def pipeline_start(project_id: str):
 
 @router.get("/{project_id}/pipeline", response_model=PipelineState)
 def pipeline_get(project_id: str):
-    """Return the current persisted pipeline state for a project."""
+    """Return the current persisted pipeline state for a project.
+
+    Corrupt (unreadable) persisted state returns 409 — never a fabricated
+    state. Missing pipeline state returns 404.
+    """
     ingestion.read_meta(config.WORKSPACE_DIR, project_id)
     raw = ingestion.read_pipeline(config.WORKSPACE_DIR, project_id)
     if raw is None:
         raise HTTPException(status_code=404, detail="No pipeline state for this project.")
-    return PipelineState.model_validate_json(raw)
+    try:
+        return pipeline_service.get_pipeline(project_id)
+    except pipeline_service.PipelineStateCorruptError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{project_id}/pipeline/resume", response_model=PipelineState)
@@ -528,57 +547,87 @@ def get_project_results(project_id: str) -> ResultsDigest:
 def get_project(project_id: str) -> ProjectDetails:
     """Retrieve project metadata, profile, code map, test plan, generated tests, and execution results."""
     meta = ingestion.read_meta(config.WORKSPACE_DIR, project_id)
+    corrupt: list[str] = []
+
+    def tolerant(raw: Optional[str], model) -> Optional[object]:
+        if raw is None:
+            return None
+        try:
+            return model.model_validate_json(raw)
+        except Exception:
+            return None
+
     raw_profile = ingestion.read_profile(config.WORKSPACE_DIR, project_id)
-    profile = ProjectProfile.model_validate_json(raw_profile) if raw_profile else None
+    profile = tolerant(raw_profile, ProjectProfile)
+    if raw_profile and profile is None:
+        corrupt.append("profile")
     raw_codemap = ingestion.read_codemap(config.WORKSPACE_DIR, project_id)
     codemap = None
     if raw_codemap:
         from app.models.codemap import CodeMap
-        codemap = CodeMap.model_validate_json(raw_codemap)
+        codemap = tolerant(raw_codemap, CodeMap)
+        if codemap is None:
+            corrupt.append("codemap")
     raw_plan = ingestion.read_test_plan(config.WORKSPACE_DIR, project_id)
     test_plan = None
     if raw_plan:
         from app.models.test_plan import TestPlan
-        test_plan = TestPlan.model_validate_json(raw_plan)
+        test_plan = tolerant(raw_plan, TestPlan)
+        if test_plan is None:
+            corrupt.append("test_plan")
     raw_gen = ingestion.read_test_generation(config.WORKSPACE_DIR, project_id)
     test_generation = None
     if raw_gen:
         from app.models.test_generation import TestGenerationResult
-        test_generation = TestGenerationResult.model_validate_json(raw_gen)
+        test_generation = tolerant(raw_gen, TestGenerationResult)
+        if test_generation is None:
+            corrupt.append("test_generation")
     raw_exec = ingestion.read_execution(config.WORKSPACE_DIR, project_id)
     execution = None
     if raw_exec:
         from app.models.execution import TestExecutionResult
-        execution = TestExecutionResult.model_validate_json(raw_exec)
+        execution = tolerant(raw_exec, TestExecutionResult)
+        if execution is None:
+            corrupt.append("execution")
     raw_diag = ingestion.read_diagnosis(config.WORKSPACE_DIR, project_id)
     diagnosis = None
     if raw_diag:
         from app.models.diagnosis import DiagnosisResult
-        diagnosis = DiagnosisResult.model_validate_json(raw_diag)
+        diagnosis = tolerant(raw_diag, DiagnosisResult)
+        if diagnosis is None:
+            corrupt.append("diagnosis")
     raw_improve = ingestion.read_improvement(config.WORKSPACE_DIR, project_id)
     improvement = None
     if raw_improve:
         from app.models.improvement import ImprovementResult
-        improvement = ImprovementResult.model_validate_json(raw_improve)
+        improvement = tolerant(raw_improve, ImprovementResult)
+        if improvement is None:
+            corrupt.append("improvement")
     raw_retest = ingestion.read_retest(config.WORKSPACE_DIR, project_id)
     retest = None
     if raw_retest:
         from app.models.retest import ReTestResult
-        retest = ReTestResult.model_validate_json(raw_retest)
+        retest = tolerant(raw_retest, ReTestResult)
+        if retest is None:
+            corrupt.append("retest")
     raw_eval = ingestion.read_evaluation(config.WORKSPACE_DIR, project_id)
     evaluation = None
     if raw_eval:
         from app.models.evaluation import EvaluationResult
-        evaluation = EvaluationResult.model_validate_json(raw_eval)
+        evaluation = tolerant(raw_eval, EvaluationResult)
+        if evaluation is None:
+            corrupt.append("evaluation")
     raw_repair = ingestion.read_repair(config.WORKSPACE_DIR, project_id)
     repair = None
     if raw_repair:
         from app.models.repair import RepairResult
-        repair = RepairResult.model_validate_json(raw_repair)
+        repair = tolerant(raw_repair, RepairResult)
+        if repair is None:
+            corrupt.append("repair")
     return ProjectDetails(
         **meta.model_dump(), profile=profile, codemap=codemap,
         test_plan=test_plan, test_generation=test_generation,
         execution=execution, diagnosis=diagnosis,
         improvement=improvement, retest=retest, evaluation=evaluation,
-        repair=repair,
+        repair=repair, corrupt_artifacts=corrupt,
     )

@@ -135,6 +135,9 @@ class ProjectDetails(ProjectMeta):
     retest: Optional[ReTestResult] = None  # populated after retest
     evaluation: Optional[EvaluationResult] = None  # populated after evaluate
     repair: Optional[RepairResult] = None  # populated after repair
+    # .meta artifacts that exist but failed validation (corrupt). Their sections
+    # are null — never a fabricated value.
+    corrupt_artifacts: list[str] = Field(default_factory=list)
 
 
 class LocalPathRequest(BaseModel):

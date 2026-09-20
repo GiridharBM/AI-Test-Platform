@@ -67,21 +67,35 @@ def build_results_digest(
     ws = workspace if workspace is not None else config.WORKSPACE_DIR
     ingestion.read_meta(ws, project_id)  # 404 for unknown/traversal ids
 
-    execution = _read_execution(ws, project_id)
-    diagnosis = _read_diagnosis(ws, project_id)
-    improvement = _read_improvement(ws, project_id)
-    retest = _read_retest(ws, project_id)
-    repair = _read_repair(ws, project_id)
-    evaluation = _read_evaluation(ws, project_id)
+    execution, exec_corrupt = _read_execution(ws, project_id)
+    diagnosis, diag_corrupt = _read_diagnosis(ws, project_id)
+    improvement, improve_corrupt = _read_improvement(ws, project_id)
+    retest, retest_corrupt = _read_retest(ws, project_id)
+    repair, repair_corrupt = _read_repair(ws, project_id)
+    evaluation, eval_corrupt = _read_evaluation(ws, project_id)
+    pipeline, pipeline_corrupt = _read_pipeline(ws, project_id)
 
-    pipeline = _read_pipeline(ws, project_id)
+    corrupt: list[str] = []
+    for name, flag in (
+        ("execution", exec_corrupt), ("diagnosis", diag_corrupt),
+        ("improvement", improve_corrupt), ("retest", retest_corrupt),
+        ("repair", repair_corrupt), ("evaluation", eval_corrupt),
+        ("pipeline", pipeline_corrupt),
+    ):
+        if flag:
+            corrupt.append(name)
 
     digest = ResultsDigest(
         project_id=project_id,
         created_at=_now(),
         pipeline_status=pipeline.overall_status if pipeline else None,
         pipeline_current_stage=pipeline.current_stage if pipeline else None,
+        corrupt_artifacts=corrupt,
     )
+    if corrupt:
+        digest.warnings.append(
+            f"Unreadable artifacts (corrupt), reported as unavailable: {', '.join(corrupt)}."
+        )
 
     _apply_execution(digest, execution)
     _apply_diagnosis(digest, diagnosis, execution)
@@ -89,7 +103,7 @@ def build_results_digest(
     _apply_retest(digest, retest)
     _apply_repair(digest, repair)
     _apply_evaluation(digest, evaluation)
-    _derive_verdict(digest, execution, retest, repair)
+    _derive_verdict(digest, execution, retest, repair, corrupt)
 
     # Bounded: cap the failing-tests list deterministically.
     max_findings = 100
@@ -102,81 +116,81 @@ def build_results_digest(
     return digest
 
 
-def _read_execution(ws, project_id) -> Optional[object]:
+def _read_execution(ws, project_id):
     raw = ingestion.read_execution(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.execution import TestExecutionResult
     try:
-        return TestExecutionResult.model_validate_json(raw)
+        return TestExecutionResult.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _read_diagnosis(ws, project_id):
     raw = ingestion.read_diagnosis(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.diagnosis import DiagnosisResult
     try:
-        return DiagnosisResult.model_validate_json(raw)
+        return DiagnosisResult.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _read_improvement(ws, project_id):
     raw = ingestion.read_improvement(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.improvement import ImprovementResult
     try:
-        return ImprovementResult.model_validate_json(raw)
+        return ImprovementResult.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _read_retest(ws, project_id):
     raw = ingestion.read_retest(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.retest import ReTestResult
     try:
-        return ReTestResult.model_validate_json(raw)
+        return ReTestResult.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _read_repair(ws, project_id):
     raw = ingestion.read_repair(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.repair import RepairResult
     try:
-        return RepairResult.model_validate_json(raw)
+        return RepairResult.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _read_evaluation(ws, project_id):
     raw = ingestion.read_evaluation(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.evaluation import EvaluationResult
     try:
-        return EvaluationResult.model_validate_json(raw)
+        return EvaluationResult.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _read_pipeline(ws, project_id):
     raw = ingestion.read_pipeline(ws, project_id)
     if raw is None:
-        return None
+        return None, False
     from app.models.pipeline import PipelineState
     try:
-        return PipelineState.model_validate_json(raw)
+        return PipelineState.model_validate_json(raw), False
     except Exception:
-        return None
+        return None, True
 
 
 def _apply_execution(digest: ResultsDigest, execution) -> None:
@@ -282,13 +296,22 @@ def _apply_evaluation(digest: ResultsDigest, evaluation) -> None:
     )
 
 
-def _derive_verdict(digest: ResultsDigest, execution, retest, repair) -> None:
+def _derive_verdict(digest: ResultsDigest, execution, retest, repair, corrupt) -> None:
     """Derive the overall verdict from evidence actually present.
 
     The verdict never fabricates success: a missing execution is
-    `no_execution`, an unavailable runtime is `unavailable`, and a repair
-    awaiting approval is `repair_pending` — not `passed`.
+    `no_execution`, an unavailable runtime is `unavailable`, a repair
+    awaiting approval is `repair_pending` — never `passed`. A corrupt
+    (unreadable) execution artifact is `unavailable`, never `passed`.
     """
+    if "execution" in corrupt:
+        digest.overall_verdict = DIGEST_VERDICT_UNAVAILABLE
+        digest.reason = (
+            "Test execution artifact is unreadable (corrupt); outcome "
+            "cannot be determined."
+        )
+        return
+
     if execution is None or execution.overall_status is None:
         digest.overall_verdict = DIGEST_VERDICT_NO_EXECUTION
         digest.reason = "No test execution has run yet."

@@ -103,6 +103,14 @@ class PipelineGateError(Exception):
     """Raised when a user decision action is not permitted by the gate."""
 
 
+class PipelineStateCorruptError(PipelineGateError):
+    """The persisted pipeline state exists but is unreadable (corrupt).
+
+    The pipeline can NEVER advance on corrupt evidence: we refuse to fabricate
+    a state. Surfaced as a recoverable conflict (409) with a safe reason.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Persistence helpers
 # ---------------------------------------------------------------------------
@@ -120,7 +128,15 @@ def _load(ws: Path, project_id: str) -> PipelineState | None:
     raw = ingestion.read_pipeline(ws, project_id)
     if raw is None:
         return None
-    return PipelineState.model_validate_json(raw)
+    try:
+        return PipelineState.model_validate_json(raw)
+    except Exception:
+        # Authoritative state exists but cannot be parsed: an explicit
+        # recoverable conflict, never a fabricated/empty state.
+        raise PipelineStateCorruptError(
+            "Persisted pipeline state is unreadable (corrupt); the pipeline "
+            "cannot advance on corrupt state. This is a recoverable condition.",
+        ) from None
 
 
 def _require(ws: Path, project_id: str) -> PipelineState:
@@ -129,6 +145,75 @@ def _require(ws: Path, project_id: str) -> PipelineState:
         ingestion.read_meta(ws, project_id)  # raises 404 for unknown project
         raise PipelineGateError("No pipeline has been started for this project. Start it first.")
     return state
+
+
+def _stale(state: PipelineState, now: datetime) -> bool:
+    """True when a `running` pipeline made no persisted progress recently.
+
+    The most recent of the active-stage start time and the last persisted
+    update is the activity heartbeat. A long-running stage whose state is
+    still being persisted (heartbeat) is NOT abandoned; a running state with
+    no recent activity is.
+    """
+    last_activity = max(
+        state.stage_started_at or state.updated_at,
+        state.updated_at,
+    )
+    return (now - last_activity).total_seconds() > config.PIPELINE_STUCK_TIMEOUT_SECONDS
+
+
+def _recover_if_stuck(state: PipelineState, ws: Path) -> bool:
+    """Deterministically recover an abandoned `running` pipeline.
+
+    Returns True when a stale `running` state was transitioned to
+    `unavailable`. Never silently re-runs the interrupted stage: the existing
+    human Resume path re-runs it deterministically from the last completed
+    stage. Idempotent: after recovery the state is no longer `running`, so
+    repeated calls (and repeated GET/start/resume) cannot double-recover.
+    """
+    if state.overall_status != PIPELINE_RUNNING or not _stale(state, _now()):
+        return False
+    _stop(state, PIPELINE_UNAVAILABLE, (
+        "Pipeline was left running with no progress and has been marked "
+        "unavailable after being abandoned; use Resume to re-run the "
+        "interrupted stage deterministically."
+    ))
+    _persist(ws, state)
+    return True
+
+
+def mark_pipeline_unavailable(
+    project_id: str,
+    workspace: Path | None = None,
+    reason: str = "Pipeline is unavailable.",
+) -> PipelineState | None:
+    """Record that a pipeline cannot proceed (e.g. auto-start failed).
+
+    Creates pipeline state on first failure so the failure is ALWAYS visible
+    through the authoritative pipeline state, with a safe reason and the
+    existing Resume path as the recoverable action. Idempotent: an existing
+    `unavailable` state is never overwritten. Returns the state or None for an
+    unknown project.
+    """
+    ws = workspace if workspace is not None else config.WORKSPACE_DIR
+    with _project_lock(project_id):
+        state = _load(ws, project_id)
+        if state is None:
+            ingestion.read_meta(ws, project_id)  # raises 404 for unknown project
+            state = PipelineState(
+                project_id=project_id,
+                pipeline_id=str(uuid.uuid4()),
+                current_stage="",
+                overall_status=PIPELINE_UNAVAILABLE,
+            )
+            state.reason = reason
+            _persist(ws, state)
+            return state
+        if state.overall_status == PIPELINE_UNAVAILABLE:
+            return state
+        _stop(state, PIPELINE_UNAVAILABLE, reason)
+        _persist(ws, state)
+        return state
 
 
 def _read_json(path: Path) -> dict | None:
@@ -140,8 +225,25 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
+def _read_json_corruptible(path: Path) -> tuple[dict | None, bool]:
+    """Read JSON as (obj, corrupt). (None, False) when absent; (None, True)
+    when the file exists but is unreadable/corrupt — distinct from missing."""
+    if not path.is_file():
+        return None, False
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), False
+    except Exception:
+        return None, True
+
+
 def _artifact(ws: Path, project_id: str, name: str) -> dict | None:
     return _read_json(ingestion.project_dir(ws, project_id) / ".meta" / f"{name}.json")
+
+
+def _artifact_corruptible(ws: Path, project_id: str, name: str) -> tuple[dict | None, bool]:
+    return _read_json_corruptible(
+        ingestion.project_dir(ws, project_id) / ".meta" / f"{name}.json"
+    )
 
 
 def _created(obj) -> str:
@@ -509,6 +611,7 @@ def _run_stage(state: PipelineState, stage: str, ws: Path) -> None:
     state.overall_status = PIPELINE_RUNNING
     state.user_decision_required = False
     state.available_actions = []
+    state.stage_started_at = start
     _persist(ws, state)
     try:
         fn = _EXEC[stage]
@@ -521,6 +624,7 @@ def _run_stage(state: PipelineState, stage: str, ws: Path) -> None:
     )
     state.stage_history.append(record)
     state.current_stage = _COMPLETED_NAME.get(stage, stage)
+    state.stage_started_at = None
     if status in (STAGE_SUCCESS, STAGE_EXHAUSTED, STAGE_SKIPPED, STAGE_APPROVED):
         state.completed_stages.append(stage)
     if stage == "improve":
@@ -558,6 +662,7 @@ def _stop(state: PipelineState, overall: str, reason: str) -> None:
     state.user_decision_required = False
     state.available_actions = []
     state.reason = reason
+    state.stage_started_at = None
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +765,14 @@ def _next_action(state: PipelineState, ws: Path):
 
     if stage == "approve":
         if status == STAGE_APPROVED:
-            rp = _artifact(ws, state.project_id, "repair")
+            rp, corrupt = _artifact_corruptible(ws, state.project_id, "repair")
+            if corrupt:
+                # A corrupt repair artifact must never fabricate completion.
+                return (
+                    "stop", PIPELINE_UNAVAILABLE,
+                    "Repair artifact is unreadable (corrupt); the applied-repair "
+                    "outcome cannot be determined.",
+                )
             fv = (rp or {}).get("final_validation", {})
             fv_status = fv.get("status") if isinstance(fv, dict) else ""
             if fv_status == FINAL_VALIDATION_PASSED:
@@ -717,6 +829,7 @@ def start_pipeline(project_id: str, workspace: Path | None = None) -> PipelineSt
     with _project_lock(project_id):
         existing = _load(ws, project_id)
         if existing is not None:
+            _recover_if_stuck(existing, ws)
             return existing
         state = PipelineState(
             project_id=project_id,
@@ -740,7 +853,10 @@ def start_pipeline(project_id: str, workspace: Path | None = None) -> PipelineSt
 
 def get_pipeline(project_id: str, workspace: Path | None = None) -> PipelineState:
     ws = workspace if workspace is not None else config.WORKSPACE_DIR
-    return _require(ws, project_id)
+    with _project_lock(project_id):
+        state = _require(ws, project_id)
+        _recover_if_stuck(state, ws)
+        return state
 
 
 def resume_pipeline(project_id: str, workspace: Path | None = None) -> PipelineState:
@@ -752,6 +868,7 @@ def resume_pipeline(project_id: str, workspace: Path | None = None) -> PipelineS
     ws = workspace if workspace is not None else config.WORKSPACE_DIR
     with _project_lock(project_id):
         state = _require(ws, project_id)
+        _recover_if_stuck(state, ws)
         if state.overall_status in (
             PIPELINE_WAITING_USER, PIPELINE_WAITING_APPROVAL,
             PIPELINE_COMPLETED, PIPELINE_REJECTED,

@@ -131,4 +131,8 @@ class ResultsDigest(BaseModel):
     # Evaluation evidence (null when evaluation has not run).
     evaluation: Optional[DigestEvaluationState] = None
 
+    # Names of .meta artifacts that exist but are unreadable (corrupt). Their
+    # derived sections render as null/unavailable — never as passed.
+    corrupt_artifacts: list[str] = Field(default_factory=list)
+
     warnings: list[str] = Field(default_factory=list)

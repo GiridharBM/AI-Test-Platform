@@ -165,3 +165,9 @@ BENCHMARK_MEASURED_RUNS = 5
 #   Purpose: prevent a benchmark measuring an unbounded workload.
 #   Bounds: > 0.
 BENCHMARK_TIMEOUT_SECONDS = 120
+
+# --- Pipeline stuck detection (M15 persistence & recovery) -------------------
+# A pipeline left in `running` for longer than this without persisted progress
+# is considered abandoned and is recovered to `unavailable` (never silently
+# re-run); the existing human Resume path then re-runs the interrupted stage.
+PIPELINE_STUCK_TIMEOUT_SECONDS = 1800

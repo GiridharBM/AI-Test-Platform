@@ -117,6 +117,30 @@ class SandboxCommandResult:
     timed_out: bool
 
 
+def _prune_stale_container(container_name: str) -> None:
+    """Remove a leftover named container that is blocking a new run.
+
+    A crash between `docker run --name <id>` and teardown leaves a container
+    whose name conflicts with every later run (`name already in use`),
+    permanently blocking recovery. Removing an abandoned container is safe:
+    results live on the host temp copy, never inside the container.
+    """
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", container_name],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _is_name_conflict(stderr: str) -> bool:
+    """Detect Docker's `name already in use` error from a run failure."""
+    low = stderr.lower()
+    return "already in use" in low or "conflict" in low
+
+
 def _docker_run(
     container_name: str,
     test_path: str,
@@ -136,7 +160,8 @@ def _docker_run(
     (execute_tests) and every M10 evaluation component execute untrusted code
     under exactly the same isolation: no network, bounded memory/CPU/timeout,
     read-only root with a small tmpfs /tmp, read-only test/source mounts, and
-    ``--rm`` cleanup.
+``--rm`` cleanup. When an abandoned run left a name-conflicting container,
+    it is pruned and the run retried once (bounded) so recovery can proceed.
     """
     exec_args = [
         "docker", "run",
@@ -160,28 +185,42 @@ def _docker_run(
     exec_args += [image, *command]
 
     start = time.monotonic()
-    try:
-        result = subprocess.run(
-            exec_args,
-            capture_output=True,
-            timeout=timeout + 10,  # extra buffer for Docker overhead
-        )
-        duration = round(time.monotonic() - start, 3)
-        timed_out = False
-    except subprocess.TimeoutExpired:
-        duration = round(time.monotonic() - start, 3)
-        timed_out = True
-        # Best-effort container cleanup — ignore kill failures
-        try:
-            subprocess.run(
-                ["docker", "kill", container_name],
-                capture_output=True,
-                timeout=10,
-            )
-        except Exception:
-            pass
-        result = subprocess.CompletedProcess(args=[], returncode=-1, stdout=b"", stderr=b"")
 
+    def _exec_once():
+        try:
+            res = subprocess.run(
+                exec_args,
+                capture_output=True,
+                timeout=timeout + 10,  # extra buffer for Docker overhead
+            )
+            return res, False
+        except subprocess.TimeoutExpired:
+            # Best-effort container cleanup — ignore kill failures
+            try:
+                subprocess.run(
+                    ["docker", "kill", container_name],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+            return (
+                subprocess.CompletedProcess(args=[], returncode=-1, stdout=b"", stderr=b""),
+                True,
+            )
+
+    result, timed_out = _exec_once()
+    if (
+        not timed_out
+        and result.returncode != 0
+        and _is_name_conflict(result.stderr.decode(errors="replace"))
+    ):
+        # A container left behind by an abandoned run blocks this named run.
+        # Prune it and retry once (bounded) so recovery never stays blocked.
+        _prune_stale_container(container_name)
+        result, timed_out = _exec_once()
+
+    duration = round(time.monotonic() - start, 3)
     stdout = result.stdout.decode(errors="replace")[:config.EXECUTION_MAX_OUTPUT_BYTES]
     stderr = result.stderr.decode(errors="replace")[:config.EXECUTION_MAX_OUTPUT_BYTES]
     return result.returncode, stdout, stderr, duration, timed_out

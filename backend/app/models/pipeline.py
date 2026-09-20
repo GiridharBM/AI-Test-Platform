@@ -5,6 +5,7 @@ M1-M11 milestone services. State is persisted to ``.meta/pipeline.json``.
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -72,3 +73,6 @@ class PipelineState(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Set while a stage is actively executing (persisted at stage start), cleared
+    # on completion. Used to detect an abandoned `running` pipeline (stuck).
+    stage_started_at: Optional[datetime] = None
