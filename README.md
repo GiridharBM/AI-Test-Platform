@@ -87,6 +87,37 @@ Run tests:
 pytest          # 479 tests — ingestion, profiling, discovery, planning, generation, execution, diagnosis, improvement, retest, evaluation, API, security
 ```
 
+## Container Deployment (Docker Compose)
+
+Full production topology for the whole platform (browser → nginx/SPA → FastAPI
+backend → Docker socket → dynamic testrunner containers). Linux host is the
+primary target; see [docs/deployment.md](docs/deployment.md) for Docker GID
+setup, identical-path workspace requirements, and security notes.
+
+```bash
+# Pre-build the sandbox testrunner image, then the backend and frontend.
+docker compose --profile testrunner build testrunner backend frontend
+
+# Start the stack (frontend published on http://localhost:8080 by default).
+docker compose up -d
+
+# Verify.
+docker compose ps
+curl http://localhost:8080/health
+curl http://localhost:8080/ready
+```
+
+Notes:
+
+- Only the frontend publishes a host port; the backend is reachable only via
+  nginx. `/api/projects/from-path` is excluded at the proxy (bare-metal/local
+  development API only).
+- The backend requires the Docker socket for sandboxed execution; mounting it
+  grants host-root-equivalent Docker control — restrict this deployment to a
+  trusted host.
+- The workspace is an identical-path bind mount at
+  `/var/lib/ai-test-platform/workspace` (do not use a named volume).
+
 ## Milestone 7 — Hybrid Failure Diagnosis
 
 - **Deterministic diagnosis core** — parses M6 execution output, classifies failures (assertion, exception, import_error, timeout, collection_error, syntax_error, unknown), produces a stable SHA-256 failure signature, links failures to source locations via the code map, and derives deterministic severity. Fully testable without any model.

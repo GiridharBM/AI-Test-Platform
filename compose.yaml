@@ -1,0 +1,87 @@
+# M16-B containerization & topology.
+#
+# Topology: browser -> frontend/nginx -> backend -> Docker socket ->
+# dynamic testrunner containers.
+#
+# Only the frontend publishes a host port. The backend is never host-published
+# (reachable solely through nginx). The backend mounts the Docker socket so
+# the M6/M10 sandbox runner can create dynamic testrunner containers; this is
+# host-root-equivalent access and must not be exposed casually.
+#
+# The workspace must be a bind mount at the SAME absolute path on host and in
+# container (/var/lib/ai-test-platform/workspace): the backend creates
+# temporary directories that are later passed as absolute bind-mount paths to
+# the host Docker daemon (TMPDIR=/var/lib/ai-test-platform/workspace/.tmp).
+
+name: ai-test-platform
+
+services:
+  backend:
+    build:
+      context: backend
+      dockerfile: Dockerfile
+      # The runtime image-build fallback needs docker/Dockerfile.testrunner at
+      # /app/docker/Dockerfile.testrunner; supply it from the repo's docker/ dir
+      # without widening the main build context.
+      additional_contexts:
+        testrunner: docker
+    image: ai-test-platform-backend
+    environment:
+      ATP_WORKSPACE_DIR: /var/lib/ai-test-platform/workspace
+      ATP_BACKEND_HOST: 0.0.0.0
+      ATP_BACKEND_PORT: "8000"
+      ATP_TESTRUNNER_IMAGE: ai-test-platform-testrunner
+      TMPDIR: /var/lib/ai-test-platform/workspace/.tmp
+    volumes:
+      - /var/lib/ai-test-platform/workspace:/var/lib/ai-test-platform/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Non-root backend (UID 1000) reaches the socket via the Docker group.
+    # ATP_DOCKER_GID = numeric GID of docker group on the Docker HOST
+    # (getent group docker | cut -d: -f3, or stat -c '%g' /var/run/docker.sock).
+    group_add:
+      - "${ATP_DOCKER_GID:-999}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5).status == 200 else sys.exit(1)"]
+      start_period: 20s
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks:
+      - default
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    image: ai-test-platform-frontend
+    ports:
+      - "${ATP_FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      start_period: 5s
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+
+  # Build-only: produces the frozen ai-test-platform-testrunner image in the
+  # shared daemon before the backend runs. Never started by a default `up`.
+  testrunner:
+    image: ai-test-platform-testrunner
+    build:
+      context: docker
+      dockerfile: Dockerfile.testrunner
+    profiles: ["testrunner"]
+    restart: "no"
+    networks:
+      - default
+
+networks:
+  default:
+    name: ai-test-platform

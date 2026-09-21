@@ -70,6 +70,17 @@ Status legend:
 └───────────────────────────────────────────────┘
 ```
 
+### Milestone 16-B — Containerization & Topology (Implemented)
+
+Production topology: `browser → frontend/nginx → FastAPI backend → Docker socket → dynamic testrunner containers`.
+
+- **Compose topology (`compose.yaml`)** — three services: `backend`, `frontend`, and a build-only `testrunner` profile. Only the frontend is host-published (`${ATP_FRONTEND_PORT:-8080}:80`); the backend publish port 8000 is never exposed to the host. Frontend depends on backend `service_healthy` (readiness gate = `/ready`).
+- **nginx (`frontend/nginx.conf`)** — serves the compiled React SPA with history-mode fallback; proxies `/api/*`, `/health`, `/ready` same-origin to `backend:8000`. **`POST /api/projects/from-path` is excluded (404) at the proxy** because it can register arbitrary existing container-filesystem paths; it remains available for bare-metal/local development only (see `docs/deployment.md`).
+- **Backend image** — pinned `python:3.14.6-slim` (M16-A runtime), pinned Docker CLI (`docker:29.6.1-cli`), runtime requirements only, non-root UID 1000, single uvicorn worker, `--host/--port` wired from the M16-A `ATP_BACKEND_HOST/PORT` variables. Contains `/app/docker/Dockerfile.testrunner` (frozen M16-A file) so the existing runtime image-build fallback still works.
+- **Workspace** — identical-path bind mount `host:/var/lib/ai-test-platform/workspace` ↔ `container:/var/lib/ai-test-platform/workspace`, with `TMPDIR` under it, because the sandbox runner passes absolute temp paths as bind mounts to the host daemon. Named volumes cannot satisfy this identity requirement.
+- **Docker socket** — mounted only into the backend; app user runs non-root and uses the host Docker group GID (`group_add: ${ATP_DOCKER_GID:-999}`). **This is host-root-equivalent access by design**; the sandboxed testrunner flags (`--network none`, `--read-only`, tmpfs, resource limits, non-root) are unchanged.
+- Single worker only — per-project in-process pipeline locks and the inline pipeline do not support multiple workers. No auth/TLS/CORS redesign in this milestone.
+
 Implemented components (Milestone 9 & 10):
 
 - **Deterministic test improvement** — consumes a `DiagnosisResult` plus the project's CodeMap, TestPlan, and generated tests; locates `NotImplementedError` scaffold placeholders and replaces them with evidence-based import-and-invoke bodies

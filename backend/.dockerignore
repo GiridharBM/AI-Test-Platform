@@ -1,0 +1,11 @@
+.venv
+venv
+workspace
+tests
+htmlcov
+.pytest_cache
+__pycache__
+*.pyc
+*.egg-info
+.ruff_cache
+Dockerfile
