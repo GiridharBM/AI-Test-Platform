@@ -8,8 +8,14 @@ FastAPI backend for the AI Test Platform.
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 source .venv/bin/activate     # Linux/macOS
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
+
+- Supported Python: 3.14 (see `.python-version`; the test suite is verified
+  against 3.14.6).
+- Runtime-only deployments can install `requirements.txt` alone; developers
+  and CI install `requirements-dev.txt` (runtime + pytest/httpx) and verify
+  the resolved environment with `pip check`.
 
 ## Run
 
@@ -36,3 +42,4 @@ pytest
 - `app/models/` — data models/schemas, including failure diagnosis (M7), test improvement (M8), re-test verification (M9), and pipeline evaluation (M10)
 - `app/services/` — business logic, including deterministic test improvement (M8), re-test verification (M9), and evaluation persistence (M10)
 - `tests/` — pytest suite (479 tests)
+- `app/core/config.py` — configuration; a few deployment values are overridable via `ATP_*` environment variables (see root `.env.example`): `ATP_WORKSPACE_DIR`, `ATP_BACKEND_HOST`, `ATP_BACKEND_PORT`, `ATP_PIPELINE_STUCK_TIMEOUT_SECONDS`, `ATP_TESTRUNNER_IMAGE`. Invalid overrides fail loudly at import; none are logged.

@@ -1,6 +1,10 @@
-FROM python:3.12-slim
+# M16-A: base image and tool versions pinned for reproducible sandbox builds.
+# Tagged 3.12 line: python:3.12.14-slim (latest published 3.12 slim at pin time).
+FROM python:3.12.14-slim
 
-RUN pip install --no-cache-dir pytest coverage && \
+# pytest/coverage versions match the verified host toolchain and support this
+# base's Python (>=3.10). Security flags are unchanged from the legacy image.
+RUN pip install --no-cache-dir pytest==9.1.1 coverage==7.16.1 && \
     groupadd -r runner && useradd -r -g runner -d /tests runner
 
 WORKDIR /tests

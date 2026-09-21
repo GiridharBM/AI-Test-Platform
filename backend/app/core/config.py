@@ -2,13 +2,63 @@
 
 All resource limits and detection thresholds live here so there is a single
 place to tune scanner behaviour. No magic numbers in service code.
+
+A small deployment surface may be overridden through ``ATP_*`` environment
+variables (documented in the root ``.env.example``). Overrides are parsed and
+validated at import time: invalid values fail loudly at startup rather than
+silently degrading, and configuration values are never logged. When no
+variables are set, behaviour is identical to the legacy hard-coded defaults.
 """
 
+import os
 from pathlib import Path
+
+
+def _env_str(name: str, default: str) -> str:
+    """Return ``os.environ[name]`` if set to a non-empty value, else ``default``.
+
+    An explicitly empty value is a misconfiguration and raises at import time.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    if value == "":
+        raise ValueError(f"Environment variable {name} must not be empty")
+    return value
+
+
+def _env_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """Like ``_env_str`` but parse and range-check an integer override."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        raise ValueError(f"{name} must be an integer, got {raw!r}")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}, got {value}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{name} must be <= {maximum}, got {value}")
+    return value
+
 
 # --- Workspace layout -------------------------------------------------------
 BACKEND_DIR = Path(__file__).resolve().parents[2]
-WORKSPACE_DIR = BACKEND_DIR / "workspace"
+WORKSPACE_DIR = Path(_env_str("ATP_WORKSPACE_DIR", str(BACKEND_DIR / "workspace")))
+
+# --- HTTP bind address (consumed by deployment launchers, not by the app) ---
+# `uvicorn app.main:app` already defaults to 127.0.0.1:8000 when these are
+# unset; they exist so deployments can override the bind address explicitly.
+BACKEND_HOST = _env_str("ATP_BACKEND_HOST", "127.0.0.1")
+BACKEND_PORT = _env_int("ATP_BACKEND_PORT", 8000, minimum=1, maximum=65535)
 
 # --- Ingestion limits -------------------------------------------------------
 MAX_UPLOAD_FILES = 5_000                    # files per upload request
@@ -101,7 +151,7 @@ EXECUTION_TIMEOUT_SECONDS = 120           # max seconds per execution run
 EXECUTION_MEMORY_LIMIT_MB = 512           # Docker --memory
 EXECUTION_CPU_LIMIT = 1.0                 # Docker --cpus
 EXECUTION_MAX_OUTPUT_BYTES = 1_048_576    # 1 MiB stdout/stderr capture limit
-EXECUTION_IMAGE_NAME = "ai-test-platform-testrunner"
+EXECUTION_IMAGE_NAME = _env_str("ATP_TESTRUNNER_IMAGE", "ai-test-platform-testrunner")
 EXECUTION_DOCKERFILE = "docker/Dockerfile.testrunner"
 # Docker Desktop (Windows/WSL2) can briefly report not-ready right after a
 # container teardown or image build. Probe retries are bounded and the pipeline
@@ -170,4 +220,6 @@ BENCHMARK_TIMEOUT_SECONDS = 120
 # A pipeline left in `running` for longer than this without persisted progress
 # is considered abandoned and is recovered to `unavailable` (never silently
 # re-run); the existing human Resume path then re-runs the interrupted stage.
-PIPELINE_STUCK_TIMEOUT_SECONDS = 1800
+PIPELINE_STUCK_TIMEOUT_SECONDS = _env_int(
+    "ATP_PIPELINE_STUCK_TIMEOUT_SECONDS", 1800, minimum=1
+)
