@@ -1,0 +1,182 @@
+# M16-C Phase 3 — Release workflow (tag-only, publish-only).
+# Triggered exclusively by vMAJOR.MINOR.PATCH tags. The ONLY workflow that
+# publishes images to GHCR. ci.yml remains publish-free.
+#
+# Builds every release image successfully BEFORE any image is published:
+#   phase 1 (build): buildx builds all three images into the gha cache
+#   phase 2 (publish): after ALL builds passed, push the release references
+# Deterministic reruns: same tag -> same commit -> same immutable tags.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          FILE_VER="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag must be vMAJOR.MINOR.PATCH: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+          if [[ ! "${FILE_VER}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must be MAJOR.MINOR.PATCH: '${FILE_VER}'"
+            exit 1
+          fi
+          if [[ "${FILE_VER}" != "${TAG_VER}" ]]; then
+            echo "::error::VERSION (${FILE_VER}) does not match tag (${TAG_VER})"
+            exit 1
+          fi
+          echo "release version validated: ${FILE_VER}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---------------- Phase 1: build all release images ----------------
+      - name: Metadata (backend)
+        id: meta-backend
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 12
+        with:
+          images: ghcr.io/giridharbm/ai-test-platform-backend
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+          flavor: |
+            latest=false
+
+      - name: Build backend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./backend
+          file: backend/Dockerfile
+          build-contexts: |
+            testrunner=docker
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Metadata (frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 12
+        with:
+          images: ghcr.io/giridharbm/ai-test-platform-frontend
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+          flavor: |
+            latest=false
+
+      - name: Build frontend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Metadata (testrunner)
+        id: meta-testrunner
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 12
+        with:
+          images: ghcr.io/giridharbm/ai-test-platform-testrunner
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+          flavor: |
+            latest=false
+
+      - name: Build testrunner image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./docker
+          file: docker/Dockerfile.testrunner
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---------- Phase 2: publish only after all builds succeeded ----------
+      - name: Publish backend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./backend
+          file: backend/Dockerfile
+          build-contexts: |
+            testrunner=docker
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=backend
+            org.opencontainers.image.version=${{ steps.meta-backend.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/GiridharBM/AI-Test-Platform
+          cache-from: type=gha
+
+      - name: Publish frontend image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=frontend
+            org.opencontainers.image.version=${{ steps.meta-frontend.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/GiridharBM/AI-Test-Platform
+          cache-from: type=gha
+
+      - name: Publish testrunner image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./docker
+          file: docker/Dockerfile.testrunner
+          push: true
+          tags: ${{ steps.meta-testrunner.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=testrunner
+            org.opencontainers.image.version=${{ steps.meta-testrunner.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/GiridharBM/AI-Test-Platform
+          cache-from: type=gha
