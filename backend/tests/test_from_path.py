@@ -31,15 +31,10 @@ def test_from_path_file_not_dir(client, tmp_path):
 
 
 def test_from_path_drive_root_rejected(client):
-    root = Path("C:/") if Path("C:/").is_dir() else Path(tmp_path_anchor())
+    root = Path(Path.cwd().anchor)
     res = client.post("/api/projects/from-path", json={"path": str(root)})
     assert res.status_code == 400
     assert "root" in res.json()["detail"].lower()
-
-
-def tmp_path_anchor():
-    """Cross-platform drive root for testing."""
-    return Path("D:/") if Path("D:/").is_dir() else Path("/")
 
 
 def test_from_path_inside_workspace_rejected(client, tmp_path):

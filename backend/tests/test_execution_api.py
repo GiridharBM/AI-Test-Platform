@@ -59,21 +59,17 @@ class TestExecuteEndpoint:
         assert data["schema_version"] == 1
         assert "Docker" in data["warnings"][0]
 
-    def test_execute_without_generate_returns_404(self):
+    def test_execute_without_generate_returns_404(self, tmp_path):
         """Execute without prior generate should return 404."""
         # Create a project but don't run pipeline
-        src = Path("C:/tmp/fakeproj_test_nonexist")
-        try:
-            src.mkdir(parents=True, exist_ok=True)
-            (src / "app.py").write_text("x = 1\n")
-            resp = client.post("/api/projects/from-path", json={"path": str(src)})
-            pid = resp.json()["project_id"]
-            resp = client.post(f"/api/projects/{pid}/execute")
-            assert resp.status_code == 404
-            assert "generate" in resp.json()["detail"].lower()
-        finally:
-            import shutil
-            shutil.rmtree(src, ignore_errors=True)
+        src = tmp_path / "fakeproj_no_generate"
+        src.mkdir()
+        (src / "app.py").write_text("x = 1\n")
+        resp = client.post("/api/projects/from-path", json={"path": str(src)})
+        pid = resp.json()["project_id"]
+        resp = client.post(f"/api/projects/{pid}/execute")
+        assert resp.status_code == 404
+        assert "generate" in resp.json()["detail"].lower()
 
     def test_execute_path_origin_mounts_registered_source(self, tmp_path):
         """F-GAP1: standalone /execute passes the registered source root for a
