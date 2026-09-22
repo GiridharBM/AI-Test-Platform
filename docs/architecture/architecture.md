@@ -6,7 +6,7 @@ Status legend:
 - **Planned** — designed for, scheduled in upcoming milestones
 - **Future/Research** — under consideration, not designed yet
 
-## Current Foundation (Implemented — Milestone 10)
+## Current Foundation (Implemented — Milestone 16)
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -173,7 +173,84 @@ Milestone 6 (also implemented):
 - Pytest-based health endpoint test
 - `.gitignore` for Python, Node.js, IDE, OS, models, workspace
 
-## Planned (Upcoming Milestones)
+### Milestone 11 — Source Repair (Implemented)
+
+- **Source-code repair with human approval** — consumes M8 `ImprovementResult` and M9 `ReTestResult` to apply targeted fixes to generated test files
+- **Deterministic repair** — evidence-based modifications to test scaffolds; never modifies original source code
+- **Human approval gate** — repair requires explicit approval before applying changes to the workspace
+- **Repair persistence** — structured results under `.meta/repair.json`
+- **Repair API** — POST /{id}/repair and repair on GET /{id}
+
+### Milestone 14 — Source Resolution (Implemented)
+
+- **Origin-aware source root resolution** — canonical `source_root()` resolver for both upload and path-origin projects
+- **Pipeline resume** — surfaced in the UI for failed/unavailable pipelines
+- **Results digest alignment** — final-validation outcome correctly maps to pipeline terminal states
+- **Cross-origin consistency** — re-test, evaluation, and standalone execute all use the registered source path
+
+### Milestone 15 — Persistence & Recovery (Implemented)
+
+- **Atomic JSON writes** — all `.meta/` persistence uses atomic write patterns
+- **Pipeline stuck detection** — pipelines left in `running` beyond `ATP_PIPELINE_STUCK_TIMEOUT_SECONDS` (default 1800s) are recovered to `unavailable`
+- **Stale result handling** — orphaned execution/diagnosis/improvement results are cleaned up on recovery
+- **Observability** — readiness endpoint (`/ready`) reports workspace and Docker runtime status
+- **Project discovery** — automatic discovery of projects in the workspace directory
+- **Upload/start failure handling** — graceful degradation when ingestion or pipeline start fails
+
+### Milestone 16 — Configuration, Containerization, CI (Closed — Verified)
+
+**M16-A — Configuration & Reproducibility:**
+
+- **Centralized configuration** — `app/core/config.py` with `ATP_*` environment variable overrides
+- **Pinned dependencies** — exact-pinned runtime and dev dependencies in `requirements.txt` and `requirements-dev.txt`
+- **Pinned base images** — `python:3.14.6-slim`, `docker:29.6.1-cli`, `node:22.20.0-alpine`, `nginx:1.28.0-alpine`, `python:3.12.14-slim` (testrunner)
+- **Python version pinning** — `.python-version` = 3.14, CI uses 3.14.6
+
+**M16-B — Containerization & Topology:**
+
+- **Compose topology** — `browser → frontend/nginx → FastAPI backend → Docker socket → dynamic testrunner containers`
+- **Non-root backend** — UID 1000, `setpriv --keep-groups` for Docker socket access
+- **Identical-path workspace bind** — host and container share `/var/lib/ai-test-platform/workspace`
+- **nginx security boundary** — `from-path` excluded at proxy (404)
+- See [M16-B Containerization](../milestones/M16-B-containerization.md) for full details
+
+**M16-C — CI & Release:**
+
+- **CI workflow** — `python -m pytest -q` for backend, `npx vitest run` + typecheck + build for frontend, compose validation, container build
+- **Release workflow** — tag-triggered, build-all-then-publish, GHCR publishing with semver/sha/latest tags
+- **Published images** — v0.1.0 images on GHCR (backend, frontend, testrunner)
+- See [M16-C CI/Release](../milestones/M16-C-ci-release.md) for full details
+
+## PLANNED — M17 / NVIDIA DGX B200
+
+The following are planned for M17 and do not exist in the codebase:
+
+- **NVIDIA DGX B200 deployment** — production GPU infrastructure for larger experiments
+- **GPU access** — NVIDIA Container Toolkit / runtime validation on DGX hardware
+- **GPU-aware AI inference** — local/private model serving with GPU acceleration
+- **Resource allocation** — GPU memory management and scheduling
+- **Performance benchmarking** — GPU-accelerated test execution and evaluation
+- **Privacy considerations** — local inference, no external API calls
+
+See [M17 DGX B200](../milestones/M17-dgx-b200.md) for planning details.
+
+## Future/Research
+
+- LLM-powered test generation (beyond deterministic scaffolding)
+- AI-powered failure analysis (real model inference beyond the M7 deterministic core)
+- Repository-level code understanding via Tree-sitter and code-aware RAG
+- Vector storage with Qdrant for embeddings
+- Autonomous agents for test generation, failure analysis, regeneration
+- Dashboard with live agent activity
+- Java/JS/TS syntax metrics via Tree-sitter
+- Advanced mutation strategies beyond M10 bounded operator set
+- Cloud/distributed benchmarking
+- GitHub repository integration
+- Multi-language support beyond Python
+
+## Not Implemented
+
+No RAG, embeddings, vector database, AI-powered test generation, GPU inference, GitHub API integration, authentication, complex frontend UI, PostgreSQL, or Redis/Celery. M7 adds deterministic failure-diagnosis with a thin, off-by-default local/private AI boundary (`llm.analyze`); it does **not** implement LLM inference, model serving, or external/cloud AI calls. M8 deterministic improvement only regenerates *generated tests'* scaffold bodies — it never modifies original source code (source repair is M11, human-gated). M9 re-test verification re-executes improved tests in the M6 Docker sandbox. M10 adds bounded, sandboxed evaluation components. M11 adds source-code repair with human approval. M15 adds persistence, recovery, and observability. M16 adds configuration, containerization, CI, and release machinery. GPU inference, DGX B200 support, and LLM model serving are planned for M17.
 
 - **Test generation** — LLM-powered unit, integration, API, edge-case, security-oriented test creation (future; M8 adds only the deterministic — non-LLM — generated-test regeneration path)
 - **AI-powered failure analysis** — the optional local/private AI diagnosis layer (interface exists in M7; real model inference planned)
